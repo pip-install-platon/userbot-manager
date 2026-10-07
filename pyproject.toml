@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "userbot-manager"
+version = "0.1.0"
+description = "Telegram userbot and operator admin bot with per-operator encrypted history"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "GPL-3.0-only" }
+dependencies = [
+    "pyrogram>=2.0.106,<3",
+    "aiogram>=3.13,<4",
+    "sqlalchemy[asyncio]>=2.0.36,<3",
+    "asyncpg>=0.30,<1",
+    "alembic>=1.14,<2",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "redis>=5.2,<6",
+    "cryptography>=43,<46",
+    "structlog>=24.4,<26",
+    "tenacity>=9,<10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<1",
+    "mypy>=1.13,<2",
+    "aiosqlite>=0.20,<1",
+    "ruff>=0.6,<1",
+]
+
+[tool.setuptools.packages.find]
+include = ["core*", "userbot*", "admin_bot*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["core", "userbot", "admin_bot"]
+warn_unused_ignores = true
+disallow_any_generics = true
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["pyrogram", "pyrogram.*", "aiogram.*", "asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]

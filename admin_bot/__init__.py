@@ -1,0 +1,1 @@
+"""aiogram admin bot process."""
