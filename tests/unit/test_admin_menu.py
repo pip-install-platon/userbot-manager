@@ -17,6 +17,28 @@ from core.db.base import Base
 from core.repositories.operators import create_operator
 
 
+class MemoryRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        del ex
+        self.values[key] = value
+
+    async def publish(self, channel: str, payload: str) -> int:
+        del channel, payload
+        return 1
+
+
+def _labels(markup: object) -> list[str]:
+    keyboard = getattr(markup, "inline_keyboard", None)
+    assert keyboard is not None
+    return [button.text for row in keyboard for button in row]
+
+
 class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
@@ -111,18 +133,17 @@ async def test_admin_menu_routes(sessions: async_sessionmaker[AsyncSession]) -> 
     recorded = RecordingSession()
     bot = Bot(token="123:token", session=recorded)
     dispatcher = create_dispatcher(sessions)
+    dispatcher["redis"] = MemoryRedis()
     user = _user(8779587662, "Админ")
 
     await dispatcher.feed_update(bot, _start_update(user, 1))
     sent = [method for method in recorded.methods if isinstance(method, SendMessage)]
     assert len(sent) == 1
     assert sent[0].text == "Здравствуйте, Админ."
-    assert sent[0].reply_markup is not None
-    labels = [button.text for row in sent[0].reply_markup.inline_keyboard for button in row]
-    assert labels == [
-        "🟢 Я свободен",
-        "🔴 Я занят",
-        "⏸ Пауза",
+    assert _labels(sent[0].reply_markup) == [
+        "<",
+        "Не работаю",
+        ">",
         "📝 Моя анкета",
         "💬 Мои клиенты",
         "⚙️ Настройки",
@@ -136,27 +157,56 @@ async def test_admin_menu_routes(sessions: async_sessionmaker[AsyncSession]) -> 
         from_user=user,
         text="Здравствуйте, Админ.",
     )
-    await dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=2,
-            callback_query=CallbackQuery(
-                id="cb-superadmin",
-                from_user=user,
-                chat_instance="chat",
-                data="menu:superadmin",
-                message=origin,
-            ),
-        ),
-    )
-    edited = [method for method in recorded.methods if isinstance(method, EditMessageText)]
-    assert len(edited) == 1
-    assert edited[0].text == "Операторы. Анкеты и переписки отсюда не открываются."
-    assert edited[0].reply_markup is not None
-    panel = [button.text for row in edited[0].reply_markup.inline_keyboard for button in row]
-    assert panel == ["Добавить оператора", "Список и статусы", "В меню"]
 
-    await dispatcher.feed_update(bot, _start_update(_user(999, "Гость"), 3))
+    async def click(update_id: int, data: str, callback_id: str) -> None:
+        await dispatcher.feed_update(
+            bot,
+            Update(
+                update_id=update_id,
+                callback_query=CallbackQuery(
+                    id=callback_id,
+                    from_user=user,
+                    chat_instance="chat",
+                    data=data,
+                    message=origin,
+                ),
+            ),
+        )
+
+    def last_edit() -> EditMessageText:
+        edits = [method for method in recorded.methods if isinstance(method, EditMessageText)]
+        assert edits
+        return edits[-1]
+
+    await click(2, "status:next", "cb-status")
+    assert _labels(last_edit().reply_markup)[1] == "Занят"
+
+    await click(3, "menu:profile", "cb-profile")
+    assert last_edit().text == "Анкета."
+    assert _labels(last_edit().reply_markup) == ["Показать", "Редактировать", "В меню"]
+
+    await click(4, "profile:edit", "cb-edit")
+    assert _labels(last_edit().reply_markup) == [
+        "Текст",
+        "Возраст",
+        "Город",
+        "Теги",
+        "Фото",
+        "Видео",
+        "Кружок",
+        "Назад",
+    ]
+
+    await click(5, "profile:photo", "cb-photo")
+    assert last_edit().text is not None
+    assert last_edit().text.startswith("Отправьте фото")
+    assert _labels(last_edit().reply_markup) == ["Назад"]
+
+    await click(6, "menu:superadmin", "cb-superadmin")
+    assert last_edit().text == "Операторы. Анкеты и переписки отсюда не открываются."
+    assert _labels(last_edit().reply_markup) == ["Добавить оператора", "Список и статусы", "В меню"]
+
+    await dispatcher.feed_update(bot, _start_update(_user(999, "Гость"), 7))
     denied = [
         method
         for method in recorded.methods

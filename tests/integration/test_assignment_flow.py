@@ -8,14 +8,15 @@ from sqlalchemy.pool import StaticPool
 
 from admin_bot.services.dialogs import load_dialog_for_operator
 from core.config import get_settings
-from core.constants import ClientState, OperatorStatus
+from core.constants import ClientState, MediaKind, OperatorStatus
 from core.crypto.service import CryptoService
 from core.db.base import Base
 from core.db.models import Message
+from core.redis.media import profile_media_key, store_profile_media
 from core.redis.status import set_status
 from core.repositories.clients import get_by_telegram_user_id
 from core.repositories.messages import list_dialog
-from core.repositories.operators import create_operator
+from core.repositories.operators import add_media, create_operator
 from core.schemas.client import IncomingPrivateMessage
 from core.schemas.events import IncomingClientMessageEvent, NewClientAssignedEvent
 from core.schemas.operator import ProfileContent
@@ -137,6 +138,94 @@ async def test_client_message_assigns_free_operator_and_sends_profile(
     assert client is not None
     assert client.assigned_operator_id == operator_id
     assert client.state == ClientState.IN_DIALOG.value
+
+
+async def test_photo_request_uses_assigned_operator_album(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    operator_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    first_photo = b"photo-python-1"
+    second_photo = b"photo-python-2"
+    foreign_photo = b"photo-other"
+    async with sessions() as session:
+        await create_operator(
+            session,
+            operator_id=operator_id,
+            telegram_user_id=501,
+            display_name="Питон",
+            profile_ciphertext=crypto.encrypt_profile(operator_id, ProfileContent(bio="анкета")),
+        )
+        await create_operator(
+            session,
+            operator_id=other_id,
+            telegram_user_id=502,
+            display_name="Другой",
+            profile_ciphertext=crypto.encrypt_profile(other_id, ProfileContent()),
+        )
+        first = await add_media(
+            session,
+            media_id=uuid.uuid4(),
+            operator_id=operator_id,
+            kind=MediaKind.PHOTO.value,
+            file_id="file-1",
+            caption_ciphertext=None,
+            position=0,
+        )
+        second = await add_media(
+            session,
+            media_id=uuid.uuid4(),
+            operator_id=operator_id,
+            kind=MediaKind.PHOTO.value,
+            file_id="file-2",
+            caption_ciphertext=None,
+            position=1,
+        )
+        foreign = await add_media(
+            session,
+            media_id=uuid.uuid4(),
+            operator_id=other_id,
+            kind=MediaKind.PHOTO.value,
+            file_id="file-foreign",
+            caption_ciphertext=None,
+            position=0,
+        )
+        await session.commit()
+    await store_profile_media(redis, first.id, first_photo)
+    await store_profile_media(redis, second.id, second_photo)
+    await store_profile_media(redis, foreign.id, foreign_photo)
+    await set_status(redis, operator_id, OperatorStatus.FREE)
+
+    sender = FakeMessenger()
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus())
+
+    async def say(message_id: int, text: str) -> None:
+        await dispatcher.handle_private(
+            IncomingPrivateMessage(
+                telegram_user_id=9001,
+                username="client",
+                message_id=message_id,
+                text=text,
+            )
+        )
+
+    await say(1, "Здравствуйте")
+    assert sender.photos == []
+    assert any("анкета" in text for _chat, text in sender.texts)
+
+    await say(2, "скинь фото")
+    await say(3, "ещё фото")
+    assert [item[1] for item in sender.photos] == [first_photo, second_photo]
+    assert all(item[1] != foreign_photo for item in sender.photos)
+    assert await redis.get(profile_media_key(first.id))
+
+    await say(4, "кружочек")
+    assert any("пока нет кружков" in text for _chat, text in sender.texts)
+    assert sender.video_notes == []
 
 
 async def test_busy_pool_replies_without_assignment(

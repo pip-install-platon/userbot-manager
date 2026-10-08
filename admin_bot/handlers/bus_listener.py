@@ -108,6 +108,8 @@ async def _notify_incoming(
             await bot.send_photo(chat_id, file)
         elif event.media_kind == MediaKind.VIDEO:
             await bot.send_video(chat_id, file)
+        elif event.media_kind == MediaKind.VIDEO_NOTE:
+            await bot.send_video_note(chat_id, file)
     except TelegramAPIError:
         log.warning("incoming_media_undelivered", operator_id=str(event.operator_id))
 

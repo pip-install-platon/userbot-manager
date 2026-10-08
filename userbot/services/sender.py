@@ -35,6 +35,14 @@ class PyrogramMessenger:
 
         await self._send(_send_video)
 
+    async def send_video_note(self, telegram_user_id: int, payload: bytes) -> None:
+        async def _send_note() -> object:
+            buffer = BytesIO(payload)
+            buffer.name = "note.mp4"
+            return await self._client.send_video_note(telegram_user_id, video_note=buffer)
+
+        await self._send(_send_note)
+
     async def send_choices(self, telegram_user_id: int, text: str, operator_id: UUID) -> None:
         markup = InlineKeyboardMarkup(
             [
