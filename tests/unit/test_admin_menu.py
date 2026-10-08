@@ -142,9 +142,10 @@ async def test_admin_menu_routes(sessions: async_sessionmaker[AsyncSession]) -> 
     assert sent[0].text == "Здравствуйте, Админ."
     assert _labels(sent[0].reply_markup) == [
         "<",
-        "Не работаю",
+        "💤 Не работаю",
         ">",
         "📝 Моя анкета",
+        "📸 Альбом",
         "💬 Мои клиенты",
         "⚙️ Настройки",
         "🛡 Операторы",
@@ -179,25 +180,34 @@ async def test_admin_menu_routes(sessions: async_sessionmaker[AsyncSession]) -> 
         return edits[-1]
 
     await click(2, "status:next", "cb-status")
-    assert _labels(last_edit().reply_markup)[1] == "Занят"
+    assert _labels(last_edit().reply_markup)[1] == "🔴 Занят 🔴"
 
     await click(3, "menu:profile", "cb-profile")
-    assert last_edit().text == "Анкета."
-    assert _labels(last_edit().reply_markup) == ["Показать", "Редактировать", "В меню"]
+    assert last_edit().text is not None
+    assert last_edit().text.startswith("Анкета")
+    assert _labels(last_edit().reply_markup) == ["👁 Показать", "✏️ Редактировать", "В меню"]
 
     await click(4, "profile:edit", "cb-edit")
     assert _labels(last_edit().reply_markup) == [
-        "Текст",
-        "Возраст",
-        "Город",
-        "Теги",
-        "Фото",
-        "Видео",
-        "Кружок",
+        "📝 Текст",
+        "🎂 Возраст",
+        "🏙 Город",
+        "🏷 Теги",
         "Назад",
     ]
 
-    await click(5, "profile:photo", "cb-photo")
+    await click(5, "menu:album", "cb-album")
+    assert last_edit().text is not None
+    assert "не входит в анкету" in last_edit().text
+    assert _labels(last_edit().reply_markup) == [
+        "📷 Фото",
+        "🎬 Видео",
+        "⭕️ Кружок",
+        "👀 Посмотреть",
+        "В меню",
+    ]
+
+    await click(8, "album:photo", "cb-photo")
     assert last_edit().text is not None
     assert last_edit().text.startswith("Отправьте фото")
     assert _labels(last_edit().reply_markup) == ["Назад"]

@@ -15,8 +15,8 @@ _MEDIA_TITLE = {
 def profile_root() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Показать", callback_data="profile:show")],
-            [InlineKeyboardButton(text="Редактировать", callback_data="profile:edit")],
+            [InlineKeyboardButton(text="👁 Показать", callback_data="profile:show")],
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data="profile:edit")],
             [InlineKeyboardButton(text="В меню", callback_data="menu:main")],
         ]
     )
@@ -25,21 +25,30 @@ def profile_root() -> InlineKeyboardMarkup:
 def profile_editor() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Текст", callback_data="profile:bio")],
-            [InlineKeyboardButton(text="Возраст", callback_data="profile:age")],
-            [InlineKeyboardButton(text="Город", callback_data="profile:city")],
-            [InlineKeyboardButton(text="Теги", callback_data="profile:tags")],
-            [InlineKeyboardButton(text="Фото", callback_data="profile:photo")],
-            [InlineKeyboardButton(text="Видео", callback_data="profile:video")],
-            [InlineKeyboardButton(text="Кружок", callback_data="profile:video_note")],
+            [InlineKeyboardButton(text="📝 Текст", callback_data="profile:bio")],
+            [InlineKeyboardButton(text="🎂 Возраст", callback_data="profile:age")],
+            [InlineKeyboardButton(text="🏙 Город", callback_data="profile:city")],
+            [InlineKeyboardButton(text="🏷 Теги", callback_data="profile:tags")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:profile")],
         ]
     )
 
 
-def prompt_back() -> InlineKeyboardMarkup:
+def album_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="profile:edit")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📷 Фото", callback_data="album:photo")],
+            [InlineKeyboardButton(text="🎬 Видео", callback_data="album:video")],
+            [InlineKeyboardButton(text="⭕️ Кружок", callback_data="album:video_note")],
+            [InlineKeyboardButton(text="👀 Посмотреть", callback_data="album:show")],
+            [InlineKeyboardButton(text="В меню", callback_data="menu:main")],
+        ]
+    )
+
+
+def prompt_back(callback_data: str = "profile:edit") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data=callback_data)]]
     )
 
 
@@ -55,7 +64,7 @@ def media_keyboard(media_rows: list[ProfileMedia]) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:profile")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data="menu:album")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

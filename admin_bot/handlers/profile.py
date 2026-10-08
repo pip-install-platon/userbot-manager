@@ -10,7 +10,13 @@ from pydantic import ValidationError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from admin_bot.keyboards.profile_editor import media_keyboard, profile_editor, profile_root, prompt_back
+from admin_bot.keyboards.profile_editor import (
+    album_menu,
+    media_keyboard,
+    profile_editor,
+    profile_root,
+    prompt_back,
+)
 from admin_bot.services.profiles import add_profile_media, read_profile, write_profile
 from admin_bot.ui import edit_callback_message, h
 from core.config import Settings
@@ -37,34 +43,56 @@ class ProfileEdit(StatesGroup):
     video_note = State()
 
 
-_FIELD_PROMPTS: dict[str, tuple[State, str]] = {
+_PROFILE_PROMPTS: dict[str, tuple[State, str]] = {
     "profile:bio": (ProfileEdit.bio, "Отправьте текст анкеты. «-» очистит его."),
     "profile:age": (ProfileEdit.age, "Отправьте возраст числом. «-» очистит его."),
     "profile:city": (ProfileEdit.city, "Отправьте город. «-» очистит его."),
     "profile:tags": (ProfileEdit.tags, "Отправьте теги через запятую. «-» очистит их."),
-    "profile:photo": (ProfileEdit.photo, "Отправьте фото в альбом. Подпись сохранится вместе с ним."),
-    "profile:video": (ProfileEdit.video, "Отправьте видео в альбом. Подпись сохранится вместе с ним."),
-    "profile:video_note": (ProfileEdit.video_note, "Отправьте кружок в альбом."),
 }
+_ALBUM_PROMPTS: dict[str, tuple[State, str]] = {
+    "album:photo": (ProfileEdit.photo, "Отправьте фото в альбом. Подпись сохранится вместе с ним."),
+    "album:video": (ProfileEdit.video, "Отправьте видео в альбом. Подпись сохранится вместе с ним."),
+    "album:video_note": (ProfileEdit.video_note, "Отправьте кружок в альбом."),
+}
+_ALBUM_TEXT = (
+    "Альбом не входит в анкету.\n"
+    "Юзербот отправит фото, видео или кружок, когда клиент попросит их в диалоге."
+)
 
 
 @router.callback_query(F.data == "menu:profile")
 async def open_profile(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await edit_callback_message(callback, "Анкета.", profile_root())
+    await edit_callback_message(
+        callback,
+        "Анкета — текст, который клиент видит в начале диалога.",
+        profile_root(),
+    )
+
+
+@router.callback_query(F.data == "menu:album")
+async def open_album(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await edit_callback_message(callback, _ALBUM_TEXT, album_menu())
 
 
 @router.callback_query(F.data == "profile:edit")
 async def open_editor(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await edit_callback_message(callback, "Что изменить?", profile_editor())
+    await edit_callback_message(callback, "Что изменить в анкете?", profile_editor())
 
 
-@router.callback_query(F.data.in_(_FIELD_PROMPTS))
+@router.callback_query(F.data.in_({*_PROFILE_PROMPTS, *_ALBUM_PROMPTS}))
 async def ask_field(callback: CallbackQuery, state: FSMContext) -> None:
-    field_state, text = _FIELD_PROMPTS[callback.data or ""]
+    key = callback.data or ""
+    if key in _ALBUM_PROMPTS:
+        field_state, text = _ALBUM_PROMPTS[key]
+        back = "menu:album"
+    else:
+        field_state, text = _PROFILE_PROMPTS[key]
+        back = "profile:edit"
     await state.set_state(field_state)
-    await edit_callback_message(callback, text, prompt_back())
+    await edit_callback_message(callback, text, prompt_back(back))
 
 
 @router.message(ProfileEdit.bio)
@@ -100,7 +128,7 @@ async def save_age(
             profile.age = int(raw)
             ProfileContent.model_validate(profile.model_dump())
         except (ValueError, ValidationError):
-            await message.answer("Введите число от 1 до 120 или «-».")
+            await message.answer("Введите число от 1 до 120 или «-».", reply_markup=prompt_back())
             return
     await _save(message, state, session, operator, crypto, redis, profile)
 
@@ -147,7 +175,7 @@ async def save_photo(
     settings: Settings,
 ) -> None:
     if message.photo is None:
-        await message.answer("Нужно именно фото.", reply_markup=prompt_back())
+        await message.answer("Нужно именно фото.", reply_markup=prompt_back("menu:album"))
         return
     await _save_media(
         message,
@@ -176,7 +204,7 @@ async def save_video(
     settings: Settings,
 ) -> None:
     if message.video is None:
-        await message.answer("Нужно именно видео.", reply_markup=prompt_back())
+        await message.answer("Нужно именно видео.", reply_markup=prompt_back("menu:album"))
         return
     await _save_media(
         message,
@@ -205,7 +233,7 @@ async def save_video_note(
     settings: Settings,
 ) -> None:
     if message.video_note is None:
-        await message.answer("Нужно именно кружок.", reply_markup=prompt_back())
+        await message.answer("Нужно именно кружок.", reply_markup=prompt_back("menu:album"))
         return
     await _save_media(
         message,
@@ -223,20 +251,28 @@ async def save_video_note(
 
 
 @router.callback_query(F.data == "profile:show")
-async def show_profile(
+async def show_profile(callback: CallbackQuery, operator: Operator, crypto: CryptoService) -> None:
+    profile = read_profile(crypto, operator)
+    await edit_callback_message(
+        callback,
+        h(profile.render(operator.display_name)),
+        profile_root(),
+    )
+
+
+@router.callback_query(F.data == "album:show")
+async def show_album(
     callback: CallbackQuery,
     bot: Bot,
     session: AsyncSession,
     operator: Operator,
     crypto: CryptoService,
 ) -> None:
-    profile = read_profile(crypto, operator)
     media_rows = await list_media(session, operator.id)
-    await edit_callback_message(
-        callback,
-        h(profile.render(operator.display_name)),
-        media_keyboard(media_rows),
-    )
+    if not media_rows:
+        await edit_callback_message(callback, "Альбом пуст.", album_menu())
+        return
+    await edit_callback_message(callback, "Файлы альбома. В анкету они не входят.", media_keyboard(media_rows))
     message = callback.message
     if not isinstance(message, Message):
         return
@@ -277,7 +313,7 @@ async def remove_media(
         ProfileUpdatedEvent(operator_id=operator.id),
     )
     log.info("profile_media_deleted", operator_id=str(operator.id), media_id=str(media_id))
-    await edit_callback_message(callback, "Файл удалён из альбома.", profile_root())
+    await edit_callback_message(callback, "Файл удалён из альбома.", album_menu())
 
 
 async def _save(
@@ -292,7 +328,10 @@ async def _save(
     try:
         validated = ProfileContent.model_validate(profile.model_dump())
     except ValidationError:
-        await message.answer("Не удалось сохранить анкету. Проверьте длину текста и тегов.")
+        await message.answer(
+            "Не удалось сохранить анкету. Проверьте длину текста и тегов.",
+            reply_markup=prompt_back(),
+        )
         return
     await write_profile(session, crypto, operator, validated)
     await _publish_profile(redis, operator)
@@ -315,12 +354,12 @@ async def _save_media(
     max_bytes: int,
 ) -> None:
     if file_size is not None and file_size > max_bytes:
-        await message.answer("Файл слишком большой.", reply_markup=prompt_back())
+        await message.answer("Файл слишком большой.", reply_markup=prompt_back("menu:album"))
         return
     try:
         payload = await _download(bot, file_id, max_bytes)
     except ValueError:
-        await message.answer("Файл слишком большой.", reply_markup=prompt_back())
+        await message.answer("Файл слишком большой.", reply_markup=prompt_back("menu:album"))
         return
     media = await add_profile_media(
         session,
@@ -331,13 +370,16 @@ async def _save_media(
         caption=message.caption,
     )
     if media is None:
-        await message.answer(f"В альбоме уже {PROFILE_MEDIA_LIMIT} файлов.", reply_markup=prompt_back())
+        await message.answer(
+            f"В альбоме уже {PROFILE_MEDIA_LIMIT} файлов.",
+            reply_markup=prompt_back("menu:album"),
+        )
         return
     await store_profile_media(redis, media.id, payload)
     await _publish_profile(redis, operator)
     await state.clear()
     log.info("profile_media_saved", operator_id=str(operator.id), media_id=str(media.id), kind=kind)
-    await message.answer("Файл добавлен в альбом.", reply_markup=profile_editor())
+    await message.answer("Файл добавлен в альбом.", reply_markup=album_menu())
 
 
 async def _download(bot: Bot, file_id: str, max_bytes: int) -> bytes:

@@ -9,9 +9,9 @@ STATUS_ORDER: tuple[OperatorStatus, ...] = (
 )
 
 STATUS_TITLE: dict[OperatorStatus, str] = {
-    OperatorStatus.BUSY: "Занят",
-    OperatorStatus.FREE: "Свободен",
-    OperatorStatus.PAUSED: "Не работаю",
+    OperatorStatus.BUSY: "🔴 Занят 🔴",
+    OperatorStatus.FREE: "🟢 Свободен 🟢",
+    OperatorStatus.PAUSED: "💤 Не работаю",
 }
 
 
@@ -37,6 +37,7 @@ def main_menu(is_superadmin: bool, status: OperatorStatus) -> InlineKeyboardMark
             InlineKeyboardButton(text=">", callback_data="status:next"),
         ],
         [InlineKeyboardButton(text="📝 Моя анкета", callback_data="menu:profile")],
+        [InlineKeyboardButton(text="📸 Альбом", callback_data="menu:album")],
         [InlineKeyboardButton(text="💬 Мои клиенты", callback_data="menu:clients")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu:settings")],
     ]
