@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from pyrogram.connection.transport.tcp.tcp import TCP
 from pyrogram.connection.transport.tcp.tcp_abridged_o import TCPAbridgedO
 from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed
 from websockets.typing import Subprotocol
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,9 @@ class WebsocketTCP(TCP):
                 subprotocols=[Subprotocol("binary")],
                 additional_headers={"Origin": "https://web.telegram.org"},
                 open_timeout=TCP.TIMEOUT,
+                # Telegram's MTProto websocket does not answer protocol pings.
+                # The library would close a live session after the ping timeout.
+                ping_interval=None,
             )
         except OSError:
             raise
@@ -76,6 +80,13 @@ class WebsocketTCP(TCP):
                 if isinstance(message, bytes):
                     self._buffer.extend(message)
                     self._ready.set()
+        except ConnectionClosed as exc:
+            received = exc.rcvd
+            log.info(
+                "Telegram websocket closed code=%s reason=%s",
+                None if received is None else received.code,
+                None if received is None else received.reason,
+            )
         finally:
             self._closed = True
             self._ready.set()

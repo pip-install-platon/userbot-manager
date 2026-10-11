@@ -2,6 +2,7 @@ import asyncio
 
 from pyrogram.connection.transport.tcp.tcp import TCP
 from pyrogram.session.internals.data_center import DataCenter
+from pytest import MonkeyPatch
 
 from userbot.network.websocket_transport import (
     WebsocketObfuscated,
@@ -46,6 +47,39 @@ async def test_recv_returns_bytes_that_arrive_after_the_call() -> None:
     payload = await transport.recv(3)
     await producer
     assert payload == b"xyz"
+
+
+async def test_connect_does_not_send_protocol_pings(monkeypatch: MonkeyPatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeSocket:
+        def __aiter__(self) -> "FakeSocket":
+            return self
+
+        async def __anext__(self) -> bytes:
+            await asyncio.Future()
+            return b""
+
+        async def close(self) -> None:
+            return None
+
+    async def fake_connect(*args: object, **kwargs: object) -> FakeSocket:
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return FakeSocket()
+
+    monkeypatch.setattr("userbot.network.websocket_transport.connect", fake_connect)
+    transport = WebsocketTCP(False, None)
+    await transport.connect(("149.154.175.53", 443))
+    try:
+        kwargs = calls["kwargs"]
+        assert isinstance(kwargs, dict)
+        assert kwargs["ping_interval"] is None
+        args = calls["args"]
+        assert isinstance(args, tuple)
+        assert args[0] == "wss://pluto.web.telegram.org/apiws"
+    finally:
+        await transport.close()
 
 
 async def test_recv_returns_none_when_stream_closes_short() -> None:
