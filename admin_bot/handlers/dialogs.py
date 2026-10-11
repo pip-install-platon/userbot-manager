@@ -10,9 +10,9 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from admin_bot.keyboards.main_menu import main_menu
-from admin_bot.keyboards.profile_editor import dialog_actions
+from admin_bot.keyboards.profile_editor import dialog_actions, dialog_reply_back
 from admin_bot.services.dialogs import load_dialog_for_operator, store_outgoing
+from admin_bot.services.menus import operator_main_menu
 from admin_bot.ui import edit_callback_message, h
 from core.config import Settings
 from core.constants import (
@@ -44,9 +44,10 @@ async def open_clients(
     state: FSMContext,
     session: AsyncSession,
     operator: Operator,
+    redis: Redis,
 ) -> None:
     await state.clear()
-    await _show_page(callback, session, operator, page=0)
+    await _show_page(callback, session, operator, page=0, redis=redis)
 
 
 @router.callback_query(F.data.startswith("clients:page:"))
@@ -54,22 +55,25 @@ async def open_page(
     callback: CallbackQuery,
     session: AsyncSession,
     operator: Operator,
+    redis: Redis,
 ) -> None:
     raw = (callback.data or "").rsplit(":", maxsplit=1)[-1]
     if not raw.isdigit():
         await callback.answer("Некорректная страница.")
         return
-    await _show_page(callback, session, operator, page=int(raw))
+    await _show_page(callback, session, operator, page=int(raw), redis=redis)
 
 
 @router.callback_query(F.data.startswith("dialog:open:"))
 async def open_dialog(
     callback: CallbackQuery,
+    state: FSMContext,
     session: AsyncSession,
     operator: Operator,
     crypto: CryptoService,
 ) -> None:
-    client_id = _parse_uuid((callback.data or "").split(":", maxsplit=1)[1])
+    await state.clear()
+    client_id = _parse_uuid((callback.data or "").rsplit(":", maxsplit=1)[-1])
     if client_id is None:
         await callback.answer("Некорректный клиент.")
         return
@@ -88,7 +92,11 @@ async def start_reply(callback: CallbackQuery, state: FSMContext, session: Async
         return
     await state.set_state(DialogReply.waiting)
     await state.update_data(client_id=str(client.id))
-    await edit_callback_message(callback, "Отправьте текст, фото или видео для клиента.")
+    await edit_callback_message(
+        callback,
+        "Отправьте текст, фото, видео или кружок для клиента.",
+        dialog_reply_back(client.id),
+    )
 
 
 @router.message(DialogReply.waiting)
@@ -106,16 +114,16 @@ async def send_reply(
     client_id = _parse_uuid(str(data.get("client_id", "")))
     if client_id is None:
         await state.clear()
-        await message.answer("Диалог не выбран.", reply_markup=main_menu(operator.is_superadmin))
+        await message.answer("Диалог не выбран.", reply_markup=await operator_main_menu(redis, operator))
         return
     client = await get_owned(session, client_id, operator.id)
     if client is None:
         await state.clear()
-        await message.answer("Это не ваш клиент.", reply_markup=main_menu(operator.is_superadmin))
+        await message.answer("Это не ваш клиент.", reply_markup=await operator_main_menu(redis, operator))
         return
     text = message.text or message.caption or ""
     if len(text) > MAX_TEXT_LENGTH:
-        await message.answer("Сообщение слишком длинное.")
+        await message.answer("Сообщение слишком длинное.", reply_markup=dialog_reply_back(client.id))
         return
     media_file_id: str | None = None
     media_kind: MediaKind | None = None
@@ -125,7 +133,7 @@ async def send_reply(
         media_file_id = message.photo[-1].file_id
         payload = await _download(bot, media_file_id, settings.media_max_bytes)
         if payload is None:
-            await message.answer("Файл слишком большой.")
+            await message.answer("Файл слишком большой.", reply_markup=dialog_reply_back(client.id))
             return
         media_key = await store_transient_media(redis, payload)
     elif message.video is not None:
@@ -133,11 +141,22 @@ async def send_reply(
         media_file_id = message.video.file_id
         payload = await _download(bot, media_file_id, settings.media_max_bytes)
         if payload is None:
-            await message.answer("Файл слишком большой.")
+            await message.answer("Файл слишком большой.", reply_markup=dialog_reply_back(client.id))
+            return
+        media_key = await store_transient_media(redis, payload)
+    elif message.video_note is not None:
+        media_kind = MediaKind.VIDEO_NOTE
+        media_file_id = message.video_note.file_id
+        payload = await _download(bot, media_file_id, settings.media_max_bytes)
+        if payload is None:
+            await message.answer("Файл слишком большой.", reply_markup=dialog_reply_back(client.id))
             return
         media_key = await store_transient_media(redis, payload)
     elif not text:
-        await message.answer("Отправьте текст, фото или видео.")
+        await message.answer(
+            "Отправьте текст, фото, видео или кружок.",
+            reply_markup=dialog_reply_back(client.id),
+        )
         return
     if client.state == ClientState.CLOSED.value:
         client.state = ClientState.IN_DIALOG.value
@@ -173,6 +192,7 @@ async def close_dialog(
     state: FSMContext,
     session: AsyncSession,
     operator: Operator,
+    redis: Redis,
 ) -> None:
     client_id = _parse_uuid((callback.data or "").rsplit(":", maxsplit=1)[-1])
     if client_id is None:
@@ -188,7 +208,7 @@ async def close_dialog(
     await edit_callback_message(
         callback,
         "Диалог завершён. История остаётся у вас, новое сообщение клиента откроет его снова.",
-        main_menu(operator.is_superadmin),
+        await operator_main_menu(redis, operator),
     )
 
 
@@ -197,6 +217,7 @@ async def _show_page(
     session: AsyncSession,
     operator: Operator,
     page: int,
+    redis: Redis,
 ) -> None:
     offset = page * DIALOG_PAGE_SIZE
     clients = await list_for_operator(
@@ -208,7 +229,7 @@ async def _show_page(
     has_next = len(clients) > DIALOG_PAGE_SIZE
     visible = clients[:DIALOG_PAGE_SIZE]
     if not visible and page == 0:
-        await edit_callback_message(callback, "У вас пока нет клиентов.", main_menu(operator.is_superadmin))
+        await edit_callback_message(callback, "У вас пока нет клиентов.", await operator_main_menu(redis, operator))
         return
     rows: list[list[InlineKeyboardButton]] = []
     for client in visible:

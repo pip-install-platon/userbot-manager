@@ -42,7 +42,12 @@ async def _run() -> None:
         name="userbot-bus",
     )
     await client.start()
-    log.info("userbot_started")
+    me = client.me
+    log.info(
+        "userbot_started",
+        user_id=None if me is None else me.id,
+        username=None if me is None else me.username,
+    )
     try:
         await idle()
     finally:

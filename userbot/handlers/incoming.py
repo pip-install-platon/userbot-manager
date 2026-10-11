@@ -55,8 +55,11 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
     elif message.video is not None:
         media_kind = MediaKind.VIDEO.value
         file_id, file_size = _file_ref(message.video)
+    elif message.video_note is not None:
+        media_kind = MediaKind.VIDEO_NOTE.value
+        file_id, file_size = _file_ref(message.video_note)
     elif text is None:
-        await message.reply("Отправьте текст, фото или видео.")
+        await message.reply("Отправьте текст, фото, видео или кружок.")
         return None
     if file_size is not None and file_size > max_bytes:
         await message.reply("Файл слишком большой.")

@@ -49,8 +49,8 @@ class ProfileMedia(Base):
     __tablename__ = "profile_media"
     __table_args__ = (
         CheckConstraint(
-            f"kind IN ('{MediaKind.PHOTO.value}', '{MediaKind.VIDEO.value}')",
-            name="kind",
+            "kind IN ('" + "', '".join(kind.value for kind in MediaKind) + "')",
+            name="ck_profile_media_kind",
         ),
     )
 

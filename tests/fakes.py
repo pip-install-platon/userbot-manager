@@ -8,6 +8,7 @@ class FakeMessenger:
         self.texts: list[tuple[int, str]] = []
         self.photos: list[tuple[int, bytes, str | None]] = []
         self.videos: list[tuple[int, bytes, str | None]] = []
+        self.video_notes: list[tuple[int, bytes]] = []
         self.choices: list[tuple[int, str, uuid.UUID]] = []
 
     async def send_text(self, telegram_user_id: int, text: str) -> None:
@@ -28,6 +29,9 @@ class FakeMessenger:
         caption: str | None,
     ) -> None:
         self.videos.append((telegram_user_id, payload, caption))
+
+    async def send_video_note(self, telegram_user_id: int, payload: bytes) -> None:
+        self.video_notes.append((telegram_user_id, payload))
 
     async def send_choices(self, telegram_user_id: int, text: str, operator_id: uuid.UUID) -> None:
         self.choices.append((telegram_user_id, text, operator_id))

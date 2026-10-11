@@ -29,7 +29,9 @@ log = structlog.get_logger(__name__)
 
 
 class SuperadminFilter(BaseFilter):
-    async def __call__(self, event: TelegramObject, operator: Operator) -> bool:
+    async def __call__(self, event: TelegramObject, operator: Operator | None = None) -> bool:
+        if operator is None:
+            return False
         return operator.is_superadmin
 
 

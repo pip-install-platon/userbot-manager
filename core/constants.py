@@ -22,6 +22,12 @@ class Direction(StrEnum):
 class MediaKind(StrEnum):
     PHOTO = "photo"
     VIDEO = "video"
+    VIDEO_NOTE = "video_note"
+
+
+class MtprotoTransport(StrEnum):
+    DIRECT = "direct"
+    WEBSOCKET = "websocket"
 
 
 CHANNEL_INCOMING_CLIENT_MESSAGE = "events.incoming_client_message"

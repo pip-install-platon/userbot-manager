@@ -28,6 +28,7 @@ from core.redis import status as operator_status
 from core.repositories import clients as client_repository
 from core.repositories import messages as message_repository
 from core.repositories import operators as operator_repository
+from core.routing.album_request import detect_album_request, missing_album_text
 from core.routing.engine import pick_free_operator
 from core.schemas.client import IncomingPrivateMessage, PendingAssignment
 from core.schemas.events import (
@@ -63,13 +64,19 @@ class OutboundVideo:
 
 
 @dataclass(frozen=True)
+class OutboundVideoNote:
+    chat_id: int
+    payload: bytes
+
+
+@dataclass(frozen=True)
 class OutboundChoice:
     chat_id: int
     text: str
     operator_id: uuid.UUID
 
 
-Outbound = OutboundText | OutboundPhoto | OutboundVideo | OutboundChoice
+Outbound = OutboundText | OutboundPhoto | OutboundVideo | OutboundVideoNote | OutboundChoice
 
 
 class EventBus(Protocol):
@@ -93,6 +100,8 @@ class OutboundMessenger(Protocol):
         caption: str | None,
     ) -> None: ...
 
+    async def send_video_note(self, telegram_user_id: int, payload: bytes) -> None: ...
+
     async def send_choices(self, telegram_user_id: int, text: str, operator_id: uuid.UUID) -> None: ...
 
 
@@ -114,7 +123,7 @@ class UserbotDispatcher:
         self._bus = bus
         self._operator_ids: set[int] = set()
         self._operator_ids_at = 0.0
-        self._profiles: dict[uuid.UUID, tuple[str, list[tuple[str, bytes, str | None]]]] = {}
+        self._profiles: dict[uuid.UUID, str] = {}
 
     @property
     def settings(self) -> Settings:
@@ -161,13 +170,16 @@ class UserbotDispatcher:
         try:
             if event.media_redis_key and event.media_kind is not None:
                 payload = await media_store.load_media(self._redis, event.media_redis_key)
-                if payload is not None and event.media_kind == MediaKind.PHOTO:
-                    await self._sender.send_photo(event.client_telegram_id, payload, event.text)
+                if payload is None:
+                    log.warning("outgoing_media_missing", message_id=str(event.message_id))
+                else:
+                    await self._send_operator_media(
+                        event.client_telegram_id,
+                        event.media_kind,
+                        payload,
+                        event.text,
+                    )
                     return
-                if payload is not None and event.media_kind == MediaKind.VIDEO:
-                    await self._sender.send_video(event.client_telegram_id, payload, event.text)
-                    return
-                log.warning("outgoing_media_missing", message_id=str(event.message_id))
             if event.text:
                 await self._sender.send_text(event.client_telegram_id, event.text)
                 return
@@ -224,6 +236,14 @@ class UserbotDispatcher:
                                 with_choices=True,
                             )
                         )
+                        outbound.extend(
+                            await self._album_outbound(
+                                session,
+                                operator,
+                                message.telegram_user_id,
+                                message.text,
+                            )
+                        )
                         await session.commit()
                         persisted = True
                         await self._play(outbound)
@@ -270,6 +290,14 @@ class UserbotDispatcher:
                                 with_choices=False,
                             )
                         )
+                        outbound.extend(
+                            await self._album_outbound(
+                                session,
+                                operator,
+                                message.telegram_user_id,
+                                message.text,
+                            )
+                        )
                         await self._queue_incoming(session, client, operator, message, events)
                     else:
                         pending = await self._build_pending(client, operator, message)
@@ -281,9 +309,25 @@ class UserbotDispatcher:
                                 with_choices=True,
                             )
                         )
+                        outbound.extend(
+                            await self._album_outbound(
+                                session,
+                                operator,
+                                message.telegram_user_id,
+                                message.text,
+                            )
+                        )
                 else:
                     if client.state == ClientState.CLOSED.value:
                         client.state = ClientState.IN_DIALOG.value
+                    outbound.extend(
+                        await self._album_outbound(
+                            session,
+                            operator,
+                            message.telegram_user_id,
+                            message.text,
+                        )
+                    )
                     await self._queue_incoming(session, client, operator, message, events)
                 await session.commit()
                 persisted = True
@@ -314,6 +358,7 @@ class UserbotDispatcher:
 
     async def _accept_pending(self, telegram_user_id: int, pending: PendingAssignment) -> None:
         events: list[tuple[str, BaseModel]] = []
+        album: list[Outbound] = []
         async with self._sessions() as session:
             client = await client_repository.get_by_id(session, pending.client_id)
             operator = await operator_repository.get_by_id(session, pending.operator_id)
@@ -336,6 +381,7 @@ class UserbotDispatcher:
                 media_kind=pending.media_kind,
             )
             events.append(self._assigned_event(client, operator))
+            album = await self._album_outbound(session, operator, telegram_user_id, plaintext or None)
             await self._queue_incoming(
                 session,
                 client,
@@ -348,6 +394,7 @@ class UserbotDispatcher:
             await session.commit()
         await pending_store.delete_pending(self._redis, telegram_user_id)
         await self._sender.send_text(telegram_user_id, f"Вы подключены к оператору {display_name}.")
+        await self._play(album)
         await self._publish_all(events)
 
     async def _switch_pending(self, telegram_user_id: int, pending: PendingAssignment) -> None:
@@ -487,7 +534,7 @@ class UserbotDispatcher:
 
     async def _profile_outbound(
         self,
-        session: AsyncSession,
+        _session: AsyncSession,
         operator: Operator,
         chat_id: int,
         *,
@@ -496,35 +543,82 @@ class UserbotDispatcher:
         cached = self._profiles.get(operator.id)
         if cached is None:
             profile = self._crypto.decrypt_profile(operator.id, operator.profile_ciphertext)
-            media_items: list[tuple[str, bytes, str | None]] = []
-            for media in await operator_repository.list_media(session, operator.id):
-                payload = await media_store.load_media(
-                    self._redis,
-                    media_store.profile_media_key(media.id),
-                )
-                if payload is None:
-                    continue
-                caption = None
-                if media.caption_ciphertext:
-                    caption = self._crypto.decrypt_for_operator(
-                        operator.id,
-                        media.caption_ciphertext,
-                    ).decode()
-                media_items.append((media.kind, payload, caption))
-            cached = (profile.render(operator.display_name), media_items)
+            cached = profile.render(operator.display_name)
             self._profiles[operator.id] = cached
-        text, media_items = cached
         outbound: list[Outbound] = []
         if with_choices:
-            outbound.append(OutboundChoice(chat_id=chat_id, text=text, operator_id=operator.id))
+            outbound.append(OutboundChoice(chat_id=chat_id, text=cached, operator_id=operator.id))
         else:
-            outbound.append(OutboundText(chat_id=chat_id, text=text))
-        for kind, payload, caption in media_items:
-            if kind == MediaKind.PHOTO.value:
-                outbound.append(OutboundPhoto(chat_id=chat_id, payload=payload, caption=caption))
-            elif kind == MediaKind.VIDEO.value:
-                outbound.append(OutboundVideo(chat_id=chat_id, payload=payload, caption=caption))
+            outbound.append(OutboundText(chat_id=chat_id, text=cached))
         return outbound
+
+    async def _album_outbound(
+        self,
+        session: AsyncSession,
+        operator: Operator,
+        chat_id: int,
+        text: str | None,
+    ) -> list[Outbound]:
+        kind = detect_album_request(text)
+        if kind is None:
+            return []
+        chosen = await self._next_album_item(session, operator, kind)
+        if chosen is None:
+            return [OutboundText(chat_id=chat_id, text=missing_album_text(operator.display_name, kind))]
+        payload, caption = chosen
+        return [self._album_item(chat_id, kind, payload, caption)]
+
+    async def _next_album_item(
+        self,
+        session: AsyncSession,
+        operator: Operator,
+        kind: MediaKind,
+    ) -> tuple[bytes, str | None] | None:
+        available: list[tuple[bytes, str | None]] = []
+        for media in await operator_repository.list_media(session, operator.id):
+            if media.kind != kind.value:
+                continue
+            payload = await media_store.load_media(self._redis, media_store.profile_media_key(media.id))
+            if payload is None:
+                continue
+            caption = None
+            if media.caption_ciphertext:
+                caption = self._crypto.decrypt_for_operator(operator.id, media.caption_ciphertext).decode()
+            available.append((payload, caption))
+        if not available:
+            return None
+        cursor = await self._redis.incr(f"album_cursor:{operator.id}:{kind.value}")
+        index = (int(cursor) - 1) % len(available)
+        return available[index]
+
+    @staticmethod
+    def _album_item(chat_id: int, kind: MediaKind, payload: bytes, caption: str | None) -> Outbound:
+        match kind:
+            case MediaKind.PHOTO:
+                return OutboundPhoto(chat_id=chat_id, payload=payload, caption=caption)
+            case MediaKind.VIDEO:
+                return OutboundVideo(chat_id=chat_id, payload=payload, caption=caption)
+            case MediaKind.VIDEO_NOTE:
+                return OutboundVideoNote(chat_id=chat_id, payload=payload)
+            case _ as unreachable:
+                assert_never(unreachable)
+
+    async def _send_operator_media(
+        self,
+        chat_id: int,
+        kind: MediaKind,
+        payload: bytes,
+        caption: str | None,
+    ) -> None:
+        match kind:
+            case MediaKind.PHOTO:
+                await self._sender.send_photo(chat_id, payload, caption)
+            case MediaKind.VIDEO:
+                await self._sender.send_video(chat_id, payload, caption)
+            case MediaKind.VIDEO_NOTE:
+                await self._sender.send_video_note(chat_id, payload)
+            case _ as unreachable:
+                assert_never(unreachable)
 
     async def _play(self, outbound: list[Outbound]) -> None:
         for item in outbound:
@@ -534,6 +628,8 @@ class UserbotDispatcher:
                 await self._sender.send_photo(item.chat_id, item.payload, item.caption)
             elif isinstance(item, OutboundVideo):
                 await self._sender.send_video(item.chat_id, item.payload, item.caption)
+            elif isinstance(item, OutboundVideoNote):
+                await self._sender.send_video_note(item.chat_id, item.payload)
             elif isinstance(item, OutboundChoice):
                 await self._sender.send_choices(item.chat_id, item.text, item.operator_id)
             else:

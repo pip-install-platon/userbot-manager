@@ -12,6 +12,7 @@ async def edit_callback_message(
     callback: CallbackQuery,
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
+    notice: str | None = None,
 ) -> None:
     message = callback.message
     if isinstance(message, Message):
@@ -20,4 +21,4 @@ async def edit_callback_message(
         except TelegramBadRequest as exc:
             if "message is not modified" not in str(exc).lower():
                 raise
-    await callback.answer()
+    await callback.answer(notice)
