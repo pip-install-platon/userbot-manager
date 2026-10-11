@@ -9,6 +9,7 @@ from core.constants import (
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
     DEFAULT_HEARTBEAT_TTL_SECONDS,
     DEFAULT_STATUS_TTL_SECONDS,
+    MtprotoTransport,
 )
 
 
@@ -32,6 +33,11 @@ class Settings(BaseSettings):
     api_hash: SecretStr | None = None
     session_string: SecretStr | None = None
     bot_token: SecretStr | None = None
+    mtproto_transport: MtprotoTransport = MtprotoTransport.DIRECT
+    device_model: str | None = None
+    system_version: str | None = None
+    app_version: str | None = None
+    lang_code: str = "en"
 
     all_operators_busy_text: str = "Все операторы заняты, попробуйте позже."
     auto_assign: bool = True
@@ -42,6 +48,24 @@ class Settings(BaseSettings):
     status_ttl_seconds: int = Field(default=DEFAULT_STATUS_TTL_SECONDS, gt=0)
     heartbeat_ttl_seconds: int = Field(default=DEFAULT_HEARTBEAT_TTL_SECONDS, gt=0)
     heartbeat_interval_seconds: int = Field(default=DEFAULT_HEARTBEAT_INTERVAL_SECONDS, gt=0)
+
+    @field_validator("device_model", "system_version", "app_version", mode="before")
+    @classmethod
+    def blank_optional_text(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("lang_code")
+    @classmethod
+    def normalize_lang_code(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("LANG_CODE must not be empty")
+        return normalized
 
     @field_validator("log_level")
     @classmethod

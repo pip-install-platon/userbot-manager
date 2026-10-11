@@ -50,6 +50,8 @@ python -m userbot.generate_session
 
 Скрипт спросит номер телефона и код. Строку из stdout запишите в `SESSION_STRING`. Это интерактивная команда, её запускают на своей машине, не в контейнере без TTY.
 
+`MTPROTO_TRANSPORT=direct` оставляет обычный TCP Pyrogram. `websocket` нужен, когда дата-центр на 80/443 отвечает на MTProto страницей HTTP вместо протокола: юзербот открывает официальный `wss://<dc>.web.telegram.org/apiws` и гоняет по нему обфусцированный байтовый поток. `DEVICE_MODEL`, `SYSTEM_VERSION` и `APP_VERSION` уходят в `initConnection`. Для уже существующей сессии Telegram Desktop их оставляют такими, какими сессия была создана.
+
 ### Токен админ-бота
 
 В @BotFather создайте нового бота и запишите токен в `BOT_TOKEN`.

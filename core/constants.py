@@ -25,6 +25,11 @@ class MediaKind(StrEnum):
     VIDEO_NOTE = "video_note"
 
 
+class MtprotoTransport(StrEnum):
+    DIRECT = "direct"
+    WEBSOCKET = "websocket"
+
+
 CHANNEL_INCOMING_CLIENT_MESSAGE = "events.incoming_client_message"
 CHANNEL_OUTGOING_TO_CLIENT = "events.outgoing_to_client"
 CHANNEL_NEW_CLIENT_ASSIGNED = "events.new_client_assigned"
