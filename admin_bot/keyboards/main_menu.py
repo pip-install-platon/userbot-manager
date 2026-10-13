@@ -38,6 +38,7 @@ def main_menu(is_superadmin: bool, status: OperatorStatus) -> InlineKeyboardMark
         ],
         [InlineKeyboardButton(text="📝 Моя анкета", callback_data="menu:profile")],
         [InlineKeyboardButton(text="📸 Альбом", callback_data="menu:album")],
+        [InlineKeyboardButton(text="📅 Встречи", callback_data="menu:meetings")],
         [InlineKeyboardButton(text="💬 Мои клиенты", callback_data="menu:clients")],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu:settings")],
     ]
@@ -47,6 +48,4 @@ def main_menu(is_superadmin: bool, status: OperatorStatus) -> InlineKeyboardMark
 
 
 def back_to_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="menu:main")]]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="menu:main")]])

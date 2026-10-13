@@ -11,13 +11,48 @@ class ChatTurn(BaseModel):
     content: str = Field(min_length=1)
 
 
+_EXTRACTION_PROMPT = (
+    "По переписке верни только JSON без пояснений: "
+    '{"city": string|null, "when_text": string|null, "client_confirmed": boolean}. '
+    "city — город встречи, when_text — примерное время своими словами, "
+    "client_confirmed — собеседник явно согласился, что встреча состоится."
+)
+
+
 def persona_messages(
     *,
     display_name: str,
     profile: ProfileContent,
     history: list[tuple[str, str]],
 ) -> list[ChatTurn]:
-    turns = [ChatTurn(role="system", content=_system_prompt(display_name, profile))]
+    return _with_history(_system_prompt(display_name, profile), history)
+
+
+def desk_messages(
+    *,
+    cities: list[str],
+    returning: bool,
+    history: list[tuple[str, str]],
+) -> list[ChatTurn]:
+    where = ", ".join(cities) if cities else "пока никто не на смене"
+    known = "Этот человек уже писал раньше. " if returning else ""
+    system = (
+        "Ты договариваешься о встрече в Telegram. "
+        "Пиши коротко, живым языком, на языке собеседника. "
+        "Не говори, что ты программа или модель. "
+        "Не называй номер телефона и точный адрес: их отправит система отдельно. "
+        "Нужны город и примерное время. "
+        f"{known}Свободные города: {where}."
+    )
+    return _with_history(system, history)
+
+
+def extraction_turns(history: list[tuple[str, str]]) -> list[ChatTurn]:
+    return _with_history(_EXTRACTION_PROMPT, history)
+
+
+def _with_history(system: str, history: list[tuple[str, str]]) -> list[ChatTurn]:
+    turns = [ChatTurn(role="system", content=system)]
     for direction, text in history:
         cleaned = text.strip()
         if not cleaned:

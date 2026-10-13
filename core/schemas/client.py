@@ -24,6 +24,7 @@ class IncomingPrivateMessage(BaseModel):
     username: str | None = None
     message_id: int
     text: str | None = None
+    phone_number: str | None = None
     media_file_id: str | None = None
     media_kind: str | None = None
     media_bytes: bytes | None = Field(default=None, exclude=True)

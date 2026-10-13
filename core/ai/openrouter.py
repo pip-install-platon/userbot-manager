@@ -4,7 +4,8 @@ from typing import Protocol
 
 import httpx
 
-from core.ai.persona import ChatTurn
+from core.ai.persona import ChatTurn, extraction_turns
+from core.meetings.facts import MeetingFacts, parse_meeting_facts
 
 _COMPLETION_PATH = "/chat/completions"
 _MAX_TOKENS = 2000
@@ -58,6 +59,12 @@ class OpenRouterClient:
         if response.status_code >= 400:
             raise OpenRouterError(f"openrouter status {response.status_code}")
         return _completion_text(response)
+
+    async def extract(self, history: Sequence[tuple[str, str]]) -> MeetingFacts:
+        turns = extraction_turns(list(history))
+        if not any(turn.role == "user" for turn in turns):
+            return MeetingFacts()
+        return parse_meeting_facts(await self.complete(turns))
 
 
 def _completion_text(response: httpx.Response) -> str:

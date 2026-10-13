@@ -37,6 +37,14 @@ def test_profile_roundtrip_uses_the_operator_id() -> None:
     assert service.decrypt_profile(operator_id, blob) == profile
 
 
+def test_desk_key_is_not_an_operator_key() -> None:
+    service = CryptoService(b"m" * 32)
+    blob = service.encrypt_for_desk("до встречи".encode())
+    assert service.decrypt_for_desk(blob) == "до встречи".encode()
+    with pytest.raises(InvalidTag):
+        service.decrypt_for_operator(uuid.uuid4(), blob)
+
+
 def test_there_is_no_bulk_decrypt() -> None:
     assert not hasattr(CryptoService, "decrypt_all")
     assert "decrypt_all" not in vars(CryptoService)

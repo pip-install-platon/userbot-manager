@@ -51,3 +51,18 @@ class AiReplyEvent(BaseModel):
     client_telegram_id: int
     client_username: str | None = None
     text: str
+
+
+class MeetingOfferEvent(BaseModel):
+    meeting_id: uuid.UUID
+    client_id: uuid.UUID
+    client_telegram_id: int
+    client_username: str | None = None
+    city: str
+    when_text: str
+    operator_ids: list[uuid.UUID]
+
+
+class OperatorAlertEvent(BaseModel):
+    operator_id: uuid.UUID
+    text: str

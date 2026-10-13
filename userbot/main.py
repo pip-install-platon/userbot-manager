@@ -38,6 +38,7 @@ async def _run() -> None:
         sender=PyrogramMessenger(client),
         bus=RedisEventBus(redis),
         model=model,
+        extractor=model,
     )
     register_incoming(client, dispatcher)
     listener = asyncio.create_task(

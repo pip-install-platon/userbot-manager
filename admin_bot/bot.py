@@ -6,7 +6,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import ErrorEvent
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from admin_bot.handlers import dialogs, profile, start, status, superadmin
+from admin_bot.handlers import dialogs, meetings, profile, start, status, superadmin
 from admin_bot.middlewares.auth import AuthMiddleware
 from admin_bot.middlewares.db import DbSessionMiddleware
 from core.config import Settings
@@ -43,6 +43,7 @@ def create_dispatcher(session_factory: async_sessionmaker[AsyncSession]) -> Disp
     dispatcher.include_router(status.router)
     dispatcher.include_router(profile.router)
     dispatcher.include_router(dialogs.router)
+    dispatcher.include_router(meetings.router)
     dispatcher.include_router(superadmin.router)
     dispatcher.include_router(start.router)
 

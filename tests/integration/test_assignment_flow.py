@@ -12,7 +12,7 @@ from core.config import get_settings
 from core.constants import CHANNEL_AI_REPLY, ClientState, Direction, MediaKind, OperatorStatus
 from core.crypto.service import CryptoService
 from core.db.base import Base
-from core.db.models import Message
+from core.db.models import Client
 from core.redis.media import profile_media_key, store_profile_media
 from core.redis.status import set_status
 from core.repositories.clients import get_by_telegram_user_id
@@ -53,7 +53,26 @@ async def sessions() -> async_sessionmaker[AsyncSession]:
     await engine.dispose()
 
 
-async def test_client_message_assigns_free_operator_and_sends_profile(
+async def _bind_client(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    telegram_user_id: int,
+    username: str,
+    operator_id: uuid.UUID,
+) -> None:
+    async with sessions() as session:
+        client = Client(
+            id=uuid.uuid4(),
+            telegram_user_id=telegram_user_id,
+            username=username,
+            assigned_operator_id=operator_id,
+            state=ClientState.IN_DIALOG.value,
+        )
+        session.add(client)
+        await session.commit()
+
+
+async def test_client_message_is_stored_before_an_operator_is_claimed(
     redis: Redis,
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -97,48 +116,34 @@ async def test_client_message_assigns_free_operator_and_sends_profile(
     await dispatcher.handle_private(incoming)
 
     assert sender.texts
-    assert bio in sender.texts[0][1]
     assert sender.texts[0][0] == 9001
-    assigned = [event for _channel, event in bus.events if isinstance(event, NewClientAssignedEvent)]
-    incoming_events = [
-        event for _channel, event in bus.events if isinstance(event, IncomingClientMessageEvent)
-    ]
-    assert len(assigned) == 1
-    assert assigned[0].operator_id == operator_id
-    assert len(incoming_events) == 1
-    assert incoming_events[0].text == "Здравствуйте, нужна помощь"
-    assert await redis.get(f"operator:{operator_id}:status") == OperatorStatus.BUSY.value
+    assert "город" in sender.texts[0][1].lower()
+    assert not any(isinstance(event, NewClientAssignedEvent) for _channel, event in bus.events)
+    assert not any(isinstance(event, IncomingClientMessageEvent) for _channel, event in bus.events)
+    assert await redis.get(f"operator:{operator_id}:status") == OperatorStatus.FREE.value
 
     async with sessions() as session:
+        client = await get_by_telegram_user_id(session, 9001)
+        assert client is not None
         rows = await list_dialog(
             session,
-            client_id=assigned[0].client_id,
+            client_id=client.id,
             operator_id=operator_id,
             limit=10,
-        )
-        assert len(rows) == 1
-        stored: Message = rows[0]
-        assert "Здравствуйте".encode() not in stored.ciphertext
-        history = await load_dialog_for_operator(
-            session,
-            crypto,
-            client_id=assigned[0].client_id,
-            operator_id=operator_id,
         )
         hidden = await load_dialog_for_operator(
             session,
             crypto,
-            client_id=assigned[0].client_id,
+            client_id=client.id,
             operator_id=other_id,
         )
-    assert history is not None
-    assert history[0][2] == "Здравствуйте, нужна помощь"
+    assert rows == []
     assert hidden is None
-    async with sessions() as session:
-        client = await get_by_telegram_user_id(session, 9001)
-    assert client is not None
-    assert client.assigned_operator_id == operator_id
-    assert client.state == ClientState.IN_DIALOG.value
+    assert client.username == "client"
+    assert client.phone_number is None
+    assert client.assigned_operator_id is None
+    assert client.state == ClientState.NEW.value
+    assert bio not in sender.texts[0][1]
 
 
 async def test_photo_request_uses_assigned_operator_album(
@@ -200,6 +205,7 @@ async def test_photo_request_uses_assigned_operator_album(
     await store_profile_media(redis, second.id, second_photo)
     await store_profile_media(redis, foreign.id, foreign_photo)
     await set_status(redis, operator_id, OperatorStatus.FREE)
+    await _bind_client(sessions, telegram_user_id=9001, username="client", operator_id=operator_id)
 
     sender = FakeMessenger()
     dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus())
@@ -216,7 +222,6 @@ async def test_photo_request_uses_assigned_operator_album(
 
     await say(1, "Здравствуйте")
     assert sender.photos == []
-    assert any("анкета" in text for _chat, text in sender.texts)
 
     await say(2, "скинь фото")
     await say(3, "ещё фото")
@@ -265,6 +270,7 @@ async def test_text_reply_uses_openrouter_persona(
         )
         await session.commit()
     await set_status(redis, operator_id, OperatorStatus.FREE)
+    await _bind_client(sessions, telegram_user_id=9001, username="client", operator_id=operator_id)
     sender = FakeMessenger()
     bus = RecordingBus()
     model = _ScriptedModel(["Рада знакомству", "Тогда до вечера"])
@@ -326,13 +332,13 @@ async def test_model_failure_leaves_the_dialog_with_the_operator(
         )
         await session.commit()
     await set_status(redis, operator_id, OperatorStatus.FREE)
+    await _bind_client(sessions, telegram_user_id=9001, username="client", operator_id=operator_id)
     sender = FakeMessenger()
     bus = RecordingBus()
     dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, bus, model=_FailingModel())
     await dispatcher.handle_private(
         IncomingPrivateMessage(telegram_user_id=9001, username="client", message_id=1, text="Привет")
     )
-    assert any("анкета" in text for _chat, text in sender.texts)
     assert all(text != "provider down" for _chat, text in sender.texts)
     assert not any(channel == CHANNEL_AI_REPLY for channel, _event in bus.events)
     assert any(isinstance(event, IncomingClientMessageEvent) for _channel, event in bus.events)
@@ -350,4 +356,10 @@ async def test_busy_pool_replies_without_assignment(
     await dispatcher.handle_private(
         IncomingPrivateMessage(telegram_user_id=42, username=None, message_id=1, text="алло")
     )
-    assert sender.texts == [(42, settings.all_operators_busy_text)]
+    assert sender.texts
+    assert settings.all_operators_busy_text not in {text for _chat, text in sender.texts}
+    assert "город" in sender.texts[0][1].lower()
+    async with sessions() as session:
+        stored = await get_by_telegram_user_id(session, 42)
+    assert stored is not None
+    assert stored.assigned_operator_id is None

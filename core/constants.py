@@ -30,12 +30,35 @@ class MtprotoTransport(StrEnum):
     WEBSOCKET = "websocket"
 
 
+class MeetingStatus(StrEnum):
+    DISCUSSION = "discussion"
+    TENTATIVE = "tentative"
+    ADDRESS_SENT = "address_sent"
+    PHONE_SHARED = "phone_shared"
+    CONFIRMED = "confirmed"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+OPEN_MEETING_STATUSES: frozenset[MeetingStatus] = frozenset(
+    {
+        MeetingStatus.DISCUSSION,
+        MeetingStatus.TENTATIVE,
+        MeetingStatus.ADDRESS_SENT,
+        MeetingStatus.PHONE_SHARED,
+        MeetingStatus.CONFIRMED,
+    }
+)
+
+
 CHANNEL_INCOMING_CLIENT_MESSAGE = "events.incoming_client_message"
 CHANNEL_OUTGOING_TO_CLIENT = "events.outgoing_to_client"
 CHANNEL_NEW_CLIENT_ASSIGNED = "events.new_client_assigned"
 CHANNEL_OPERATOR_STATUS_CHANGED = "events.operator_status_changed"
 CHANNEL_PROFILE_UPDATED = "events.profile_updated"
 CHANNEL_AI_REPLY = "events.ai_reply"
+CHANNEL_MEETING_OFFER = "events.meeting_offer"
+CHANNEL_OPERATOR_ALERT = "events.operator_alert"
 
 DEFAULT_STATUS_TTL_SECONDS = 60
 DEFAULT_HEARTBEAT_TTL_SECONDS = 90

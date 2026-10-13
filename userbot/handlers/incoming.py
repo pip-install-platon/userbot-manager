@@ -43,6 +43,7 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
     if user is None or message.id is None:
         return None
     text = message.text or message.caption
+    phone = _phone(message)
     if text is not None and len(text) > MAX_TEXT_LENGTH:
         await message.reply("Сообщение слишком длинное.")
         return None
@@ -58,8 +59,8 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
     elif message.video_note is not None:
         media_kind = MediaKind.VIDEO_NOTE.value
         file_id, file_size = _file_ref(message.video_note)
-    elif text is None:
-        await message.reply("Отправьте текст, фото, видео или кружок.")
+    elif text is None and phone is None:
+        await message.reply("Отправьте текст, фото, видео, кружок или номер.")
         return None
     if file_size is not None and file_size > max_bytes:
         await message.reply("Файл слишком большой.")
@@ -80,10 +81,22 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
         username=user.username,
         message_id=message.id,
         text=text,
+        phone_number=phone,
         media_file_id=file_id,
         media_kind=media_kind,
         media_bytes=media_bytes,
     )
+
+
+def _phone(message: Message) -> str | None:
+    contact = message.contact
+    if contact is not None and isinstance(contact.phone_number, str) and contact.phone_number.strip():
+        return contact.phone_number
+    user = message.from_user
+    number = getattr(user, "phone_number", None)
+    if isinstance(number, str) and number.strip():
+        return number
+    return None
 
 
 def _file_ref(media: object) -> tuple[str | None, int | None]:

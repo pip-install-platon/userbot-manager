@@ -16,20 +16,25 @@ from core.constants import (
     AI_HISTORY_MESSAGES,
     CHANNEL_AI_REPLY,
     CHANNEL_INCOMING_CLIENT_MESSAGE,
+    CHANNEL_MEETING_OFFER,
     CHANNEL_NEW_CLIENT_ASSIGNED,
+    CHANNEL_OPERATOR_ALERT,
     CHANNEL_OPERATOR_STATUS_CHANGED,
     MAX_TEXT_LENGTH,
     ClientState,
     Direction,
     MediaKind,
+    MeetingStatus,
     OperatorStatus,
 )
 from core.crypto.service import CryptoService
 from core.db.models import Client, Operator
+from core.meetings.facts import MeetingExtractor
 from core.redis import media as media_store
 from core.redis import pending as pending_store
 from core.redis import status as operator_status
 from core.repositories import clients as client_repository
+from core.repositories import meetings as meeting_repository
 from core.repositories import messages as message_repository
 from core.repositories import operators as operator_repository
 from core.routing.album_request import detect_album_request, missing_album_text
@@ -42,6 +47,7 @@ from core.schemas.events import (
     OperatorStatusChangedEvent,
     OutgoingToClientEvent,
 )
+from userbot.services.desk import DeskOutcome, conduct, confirm_assigned
 
 log = structlog.get_logger(__name__)
 
@@ -128,6 +134,7 @@ class UserbotDispatcher:
         sender: OutboundMessenger,
         bus: EventBus,
         model: ReplyModel | None = None,
+        extractor: MeetingExtractor | None = None,
     ) -> None:
         self._settings = settings
         self._sessions = session_factory
@@ -136,6 +143,7 @@ class UserbotDispatcher:
         self._sender = sender
         self._bus = bus
         self._model = model
+        self._extractor = extractor
         self._operator_ids: set[int] = set()
         self._operator_ids_at = 0.0
         self._profiles: dict[uuid.UUID, str] = {}
@@ -219,6 +227,8 @@ class UserbotDispatcher:
         claimed_id: uuid.UUID | None = None
         persisted = False
         ai_reply: AiReplySeed | None = None
+        desk_client_id: uuid.UUID | None = None
+        confirm_seed: tuple[uuid.UUID, uuid.UUID, str] | None = None
 
         async with self._sessions() as session:
             try:
@@ -269,9 +279,18 @@ class UserbotDispatcher:
                     session,
                     telegram_user_id=message.telegram_user_id,
                     username=message.username,
+                    phone_number=message.phone_number,
                 )
                 operator = await self._current_operator(session, client)
-                if operator is None:
+                if operator is not None and await meeting_repository.should_reopen_desk(session, client.id):
+                    client.assigned_operator_id = None
+                    client.state = ClientState.NEW.value
+                    operator = None
+                if operator is None and self._settings.auto_assign:
+                    inserted = await self._queue_incoming(session, client, None, message, events)
+                    if inserted:
+                        desk_client_id = client.id
+                elif operator is None:
                     operator = await pick_free_operator(
                         session,
                         self._redis,
@@ -295,46 +314,23 @@ class UserbotDispatcher:
                             ),
                         )
                     )
-                    if self._settings.auto_assign:
-                        self._assign(client, operator, ClientState.IN_DIALOG)
-                        events.append(self._assigned_event(client, operator))
-                        outbound.extend(
-                            await self._profile_outbound(
-                                session,
-                                operator,
-                                message.telegram_user_id,
-                                with_choices=False,
-                            )
+                    pending = await self._build_pending(client, operator, message)
+                    outbound.extend(
+                        await self._profile_outbound(
+                            session,
+                            operator,
+                            message.telegram_user_id,
+                            with_choices=True,
                         )
-                        outbound.extend(
-                            await self._album_outbound(
-                                session,
-                                operator,
-                                message.telegram_user_id,
-                                message.text,
-                            )
+                    )
+                    outbound.extend(
+                        await self._album_outbound(
+                            session,
+                            operator,
+                            message.telegram_user_id,
+                            message.text,
                         )
-                        inserted = await self._queue_incoming(session, client, operator, message, events)
-                        if inserted:
-                            ai_reply = self._ai_seed(client, operator, message)
-                    else:
-                        pending = await self._build_pending(client, operator, message)
-                        outbound.extend(
-                            await self._profile_outbound(
-                                session,
-                                operator,
-                                message.telegram_user_id,
-                                with_choices=True,
-                            )
-                        )
-                        outbound.extend(
-                            await self._album_outbound(
-                                session,
-                                operator,
-                                message.telegram_user_id,
-                                message.text,
-                            )
-                        )
+                    )
                 else:
                     if client.state == ClientState.CLOSED.value:
                         client.state = ClientState.IN_DIALOG.value
@@ -347,7 +343,13 @@ class UserbotDispatcher:
                         )
                     )
                     inserted = await self._queue_incoming(session, client, operator, message, events)
-                    if inserted:
+                    waiting_for_yes = (
+                        inserted and message.text is not None and await self._waiting_for_client(session, client.id)
+                    )
+                    if waiting_for_yes and message.text is not None:
+                        confirm_seed = (operator.id, client.id, message.text)
+                        ai_reply = self._ai_seed(client, operator, message)
+                    elif inserted:
                         ai_reply = self._ai_seed(client, operator, message)
                 await session.commit()
                 persisted = True
@@ -375,8 +377,45 @@ class UserbotDispatcher:
                 raise
         await self._play(outbound)
         await self._publish_all(events)
+        if desk_client_id is not None:
+            outcome = await conduct(
+                self._sessions,
+                self._redis,
+                self._crypto,
+                self._model,
+                self._extractor,
+                client_id=desk_client_id,
+            )
+            await self._deliver_desk(message.telegram_user_id, outcome)
+            return
+        if confirm_seed is not None:
+            operator_id, client_id, text = confirm_seed
+            confirmed = await confirm_assigned(
+                self._sessions,
+                self._redis,
+                self._crypto,
+                self._extractor,
+                operator_id=operator_id,
+                client_id=client_id,
+                text=text,
+            )
+            if confirmed is not None:
+                await self._deliver_desk(message.telegram_user_id, confirmed)
+                return
         if ai_reply is not None:
             await self._send_ai_reply(ai_reply)
+
+    async def _waiting_for_client(self, session: AsyncSession, client_id: uuid.UUID) -> bool:
+        meeting = await meeting_repository.get_open(session, client_id)
+        return meeting is not None and meeting.status == MeetingStatus.ADDRESS_SENT.value
+
+    async def _deliver_desk(self, chat_id: int, outcome: DeskOutcome) -> None:
+        if outcome.reply:
+            await self._sender.send_text(chat_id, outcome.reply)
+        if outcome.offer is not None:
+            await self._bus.publish(CHANNEL_MEETING_OFFER, outcome.offer)
+        if outcome.alert is not None:
+            await self._bus.publish(CHANNEL_OPERATOR_ALERT, outcome.alert)
 
     async def _accept_pending(self, telegram_user_id: int, pending: PendingAssignment) -> None:
         events: list[tuple[str, BaseModel]] = []
@@ -495,19 +534,25 @@ class UserbotDispatcher:
         self,
         session: AsyncSession,
         client: Client,
-        operator: Operator,
+        operator: Operator | None,
         message: IncomingPrivateMessage,
         events: list[tuple[str, BaseModel]],
         media_redis_key: str | None = None,
     ) -> bool:
         if media_redis_key is None and message.media_bytes:
             media_redis_key = await media_store.store_transient_media(self._redis, message.media_bytes)
-        ciphertext = self._crypto.encrypt_for_operator(operator.id, (message.text or "").encode())
+        plaintext = (message.text or "").encode()
+        if operator is None:
+            ciphertext = self._crypto.encrypt_for_desk(plaintext)
+            operator_id = None
+        else:
+            ciphertext = self._crypto.encrypt_for_operator(operator.id, plaintext)
+            operator_id = operator.id
         _row, inserted = await message_repository.insert_message(
             session,
             message_id=uuid.uuid4(),
             client_id=client.id,
-            operator_id=operator.id,
+            operator_id=operator_id,
             direction=Direction.INCOMING.value,
             ciphertext=ciphertext,
             media_file_id=message.media_file_id,
@@ -520,6 +565,8 @@ class UserbotDispatcher:
                 telegram_message_id=message.message_id,
             )
             return False
+        if operator is None:
+            return True
         kind = MediaKind(message.media_kind) if message.media_kind else None
         events.append(
             (
@@ -587,16 +634,13 @@ class UserbotDispatcher:
             if operator is None or not operator.is_active:
                 return
             profile = self._crypto.decrypt_profile(operator.id, operator.profile_ciphertext)
-            rows = await message_repository.list_recent_dialog(
+            rows = await message_repository.list_recent_visible(
                 session,
                 client_id=seed.client_id,
                 operator_id=operator.id,
                 limit=AI_HISTORY_MESSAGES,
             )
-            history = [
-                (row.direction, self._crypto.decrypt_for_operator(operator.id, row.ciphertext).decode())
-                for row in rows
-            ]
+            history = [(row.direction, self._crypto.decrypt_text(row.operator_id, row.ciphertext)) for row in rows]
             display_name = operator.display_name
         turns = persona_messages(display_name=display_name, profile=profile, history=history)
         if not any(turn.role == "user" for turn in turns):
