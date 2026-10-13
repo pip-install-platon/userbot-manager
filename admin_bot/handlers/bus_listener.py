@@ -6,11 +6,16 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from admin_bot.ui import h
-from core.constants import CHANNEL_INCOMING_CLIENT_MESSAGE, CHANNEL_NEW_CLIENT_ASSIGNED, MediaKind
+from core.constants import (
+    CHANNEL_AI_REPLY,
+    CHANNEL_INCOMING_CLIENT_MESSAGE,
+    CHANNEL_NEW_CLIENT_ASSIGNED,
+    MediaKind,
+)
 from core.redis.client import open_redis
 from core.redis.media import load_media
 from core.repositories.operators import get_by_id
-from core.schemas.events import IncomingClientMessageEvent, NewClientAssignedEvent
+from core.schemas.events import AiReplyEvent, IncomingClientMessageEvent, NewClientAssignedEvent
 
 log = structlog.get_logger(__name__)
 
@@ -22,7 +27,11 @@ async def listen_bus(
 ) -> None:
     redis = open_redis(redis_url)
     pubsub = redis.pubsub()
-    await pubsub.subscribe(CHANNEL_INCOMING_CLIENT_MESSAGE, CHANNEL_NEW_CLIENT_ASSIGNED)
+    await pubsub.subscribe(
+        CHANNEL_INCOMING_CLIENT_MESSAGE,
+        CHANNEL_NEW_CLIENT_ASSIGNED,
+        CHANNEL_AI_REPLY,
+    )
     try:
         async for incoming in pubsub.listen():
             if incoming.get("type") != "message":
@@ -56,6 +65,10 @@ async def _dispatch(
     if channel == CHANNEL_INCOMING_CLIENT_MESSAGE:
         incoming = IncomingClientMessageEvent.model_validate_json(payload)
         await _notify_incoming(bot, session_factory, redis_url, incoming)
+        return
+    if channel == CHANNEL_AI_REPLY:
+        reply = AiReplyEvent.model_validate_json(payload)
+        await _notify_ai_reply(bot, session_factory, reply)
 
 
 async def _notify_assignment(
@@ -112,6 +125,25 @@ async def _notify_incoming(
             await bot.send_video_note(chat_id, file)
     except TelegramAPIError:
         log.warning("incoming_media_undelivered", operator_id=str(event.operator_id))
+
+
+async def _notify_ai_reply(
+    bot: Bot,
+    session_factory: async_sessionmaker[AsyncSession],
+    event: AiReplyEvent,
+) -> None:
+    async with session_factory() as session:
+        operator = await get_by_id(session, event.operator_id)
+        if operator is None or not operator.is_active:
+            return
+        chat_id = operator.telegram_user_id
+    label = f"@{event.client_username}" if event.client_username else str(event.client_telegram_id)
+    await _safe_send(
+        bot,
+        chat_id,
+        f"Нейросеть ответила {h(label)}:\n{h(event.text)}",
+        event.operator_id,
+    )
 
 
 async def _safe_send(bot: Bot, chat_id: int, text: str, operator_id: object) -> None:

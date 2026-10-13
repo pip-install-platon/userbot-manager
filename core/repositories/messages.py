@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +27,7 @@ async def insert_message(
         ciphertext=ciphertext,
         media_file_id=media_file_id,
         telegram_message_id=telegram_message_id,
+        created_at=datetime.now(UTC),
     )
     try:
         async with session.begin_nested():
@@ -37,6 +39,24 @@ async def insert_message(
             raise
         return existing, False
     return message, True
+
+
+async def list_recent_dialog(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    operator_id: uuid.UUID,
+    limit: int,
+) -> list[Message]:
+    statement = (
+        select(Message)
+        .where(Message.client_id == client_id, Message.operator_id == operator_id)
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(await session.scalars(statement))
+    rows.reverse()
+    return rows
 
 
 async def list_dialog(

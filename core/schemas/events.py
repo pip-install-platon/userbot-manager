@@ -43,3 +43,11 @@ class OperatorStatusChangedEvent(BaseModel):
 
 class ProfileUpdatedEvent(BaseModel):
     operator_id: uuid.UUID
+
+
+class AiReplyEvent(BaseModel):
+    operator_id: uuid.UUID
+    client_id: uuid.UUID
+    client_telegram_id: int
+    client_username: str | None = None
+    text: str

@@ -3,7 +3,8 @@ import asyncio
 import structlog
 from pyrogram.sync import idle
 
-from core.config import get_settings
+from core.ai.openrouter import OpenRouterClient
+from core.config import Settings, get_settings
 from core.crypto.service import CryptoService
 from core.db.engine import dispose_db, init_db, wait_for_database
 from core.logging import setup_logging
@@ -28,6 +29,7 @@ async def _run() -> None:
     session_factory = init_db(settings)
     redis = create_redis(settings)
     client = create_userbot(settings)
+    model = _reply_model(settings)
     dispatcher = UserbotDispatcher(
         settings=settings,
         session_factory=session_factory,
@@ -35,6 +37,7 @@ async def _run() -> None:
         crypto=CryptoService(settings.master_key_bytes()),
         sender=PyrogramMessenger(client),
         bus=RedisEventBus(redis),
+        model=model,
     )
     register_incoming(client, dispatcher)
     listener = asyncio.create_task(
@@ -47,6 +50,7 @@ async def _run() -> None:
         "userbot_started",
         user_id=None if me is None else me.id,
         username=None if me is None else me.username,
+        ai_replies=model is not None,
     )
     try:
         await idle()
@@ -54,8 +58,24 @@ async def _run() -> None:
         listener.cancel()
         await asyncio.gather(listener, return_exceptions=True)
         await client.stop()
+        if model is not None:
+            await model.aclose()
         await close_redis()
         await dispose_db()
+
+
+def _reply_model(settings: Settings) -> OpenRouterClient | None:
+    if not settings.ai_replies:
+        return None
+    if settings.openrouter_api_key is None:
+        log.warning("ai_replies_missing_key")
+        return None
+    return OpenRouterClient(
+        api_key=settings.openrouter_api_key.get_secret_value(),
+        model=settings.openrouter_model,
+        base_url=settings.openrouter_base_url,
+        timeout_seconds=settings.ai_timeout_seconds,
+    )
 
 
 def main() -> None:
