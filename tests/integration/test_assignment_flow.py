@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from admin_bot.services.dialogs import load_dialog_for_operator
+from core.ai.persona import ChatTurn
 from core.config import get_settings
-from core.constants import ClientState, MediaKind, OperatorStatus
+from core.constants import CHANNEL_AI_REPLY, ClientState, Direction, MediaKind, OperatorStatus
 from core.crypto.service import CryptoService
 from core.db.base import Base
 from core.db.models import Message
@@ -18,7 +19,7 @@ from core.repositories.clients import get_by_telegram_user_id
 from core.repositories.messages import list_dialog
 from core.repositories.operators import add_media, create_operator
 from core.schemas.client import IncomingPrivateMessage
-from core.schemas.events import IncomingClientMessageEvent, NewClientAssignedEvent
+from core.schemas.events import AiReplyEvent, IncomingClientMessageEvent, NewClientAssignedEvent
 from core.schemas.operator import ProfileContent
 from tests.fakes import FakeMessenger, RecordingBus
 from userbot.services.dispatcher import UserbotDispatcher
@@ -226,6 +227,115 @@ async def test_photo_request_uses_assigned_operator_album(
     await say(4, "кружочек")
     assert any("пока нет кружков" in text for _chat, text in sender.texts)
     assert sender.video_notes == []
+
+
+class _ScriptedModel:
+    def __init__(self, replies: list[str]) -> None:
+        self._replies = list(replies)
+        self.seen: list[list[ChatTurn]] = []
+
+    async def complete(self, messages: list[ChatTurn]) -> str:
+        self.seen.append(list(messages))
+        return self._replies.pop(0)
+
+
+class _FailingModel:
+    async def complete(self, messages: list[ChatTurn]) -> str:
+        raise RuntimeError("provider down")
+
+
+async def test_text_reply_uses_openrouter_persona(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    operator_id = uuid.uuid4()
+    async with sessions() as session:
+        await create_operator(
+            session,
+            operator_id=operator_id,
+            telegram_user_id=501,
+            display_name="Анна",
+            profile_ciphertext=crypto.encrypt_profile(
+                operator_id,
+                ProfileContent(bio="Люблю ночные прогулки", city="Казань"),
+            ),
+        )
+        await session.commit()
+    await set_status(redis, operator_id, OperatorStatus.FREE)
+    sender = FakeMessenger()
+    bus = RecordingBus()
+    model = _ScriptedModel(["Рада знакомству", "Тогда до вечера"])
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, bus, model=model)
+
+    async def say(message_id: int, text: str) -> None:
+        await dispatcher.handle_private(
+            IncomingPrivateMessage(
+                telegram_user_id=9001,
+                username="client",
+                message_id=message_id,
+                text=text,
+            )
+        )
+
+    await say(1, "Привет")
+    await say(2, "скинь фото")
+    await say(3, "Что делаешь?")
+
+    assert [text for _chat, text in sender.texts if text in {"Рада знакомству", "Тогда до вечера"}] == [
+        "Рада знакомству",
+        "Тогда до вечера",
+    ]
+    assert len(model.seen) == 2
+    assert "Люблю ночные прогулки" in model.seen[0][0].content
+    assert model.seen[1][-1] == ChatTurn(role="user", content="Что делаешь?")
+    assert any(turn.role == "assistant" and turn.content == "Рада знакомству" for turn in model.seen[1])
+    replies = [event for channel, event in bus.events if channel == CHANNEL_AI_REPLY]
+    assert len(replies) == 2
+    assert all(isinstance(event, AiReplyEvent) for event in replies)
+    async with sessions() as session:
+        client = await get_by_telegram_user_id(session, 9001)
+        assert client is not None
+        rows = await list_dialog(
+            session,
+            client_id=client.id,
+            operator_id=operator_id,
+            limit=10,
+        )
+    outgoing = [row for row in rows if row.direction == Direction.OUTGOING.value]
+    assert len(outgoing) == 2
+
+
+async def test_model_failure_leaves_the_dialog_with_the_operator(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    operator_id = uuid.uuid4()
+    async with sessions() as session:
+        await create_operator(
+            session,
+            operator_id=operator_id,
+            telegram_user_id=501,
+            display_name="Анна",
+            profile_ciphertext=crypto.encrypt_profile(operator_id, ProfileContent(bio="анкета")),
+        )
+        await session.commit()
+    await set_status(redis, operator_id, OperatorStatus.FREE)
+    sender = FakeMessenger()
+    bus = RecordingBus()
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, bus, model=_FailingModel())
+    await dispatcher.handle_private(
+        IncomingPrivateMessage(telegram_user_id=9001, username="client", message_id=1, text="Привет")
+    )
+    assert any("анкета" in text for _chat, text in sender.texts)
+    assert all(text != "provider down" for _chat, text in sender.texts)
+    assert not any(channel == CHANNEL_AI_REPLY for channel, _event in bus.events)
+    assert any(isinstance(event, IncomingClientMessageEvent) for _channel, event in bus.events)
 
 
 async def test_busy_pool_replies_without_assignment(

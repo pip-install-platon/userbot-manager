@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     app_version: str | None = None
     lang_code: str = "en"
 
+    ai_replies: bool = False
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str = "google/gemini-3.5-flash"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    ai_timeout_seconds: float = Field(default=30, gt=0)
+
     all_operators_busy_text: str = "Все операторы заняты, попробуйте позже."
     auto_assign: bool = True
     superadmin_telegram_id: int | None = None
@@ -58,6 +64,22 @@ class Settings(BaseSettings):
             stripped = value.strip()
             return stripped or None
         return value
+
+    @field_validator("openrouter_model")
+    @classmethod
+    def model_is_present(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("OPENROUTER_MODEL must not be empty")
+        return stripped
+
+    @field_validator("openrouter_base_url")
+    @classmethod
+    def openrouter_https(cls, value: str) -> str:
+        stripped = value.strip().rstrip("/")
+        if not stripped.startswith("https://"):
+            raise ValueError("OPENROUTER_BASE_URL must use https")
+        return stripped
 
     @field_validator("lang_code")
     @classmethod
