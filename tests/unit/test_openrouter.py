@@ -56,6 +56,7 @@ async def test_openrouter_posts_model_and_strips_completion() -> None:
     body = seen["body"]
     assert isinstance(body, dict)
     assert body["model"] == "anthropic/claude-3.5-haiku"
+    assert body["max_tokens"] == 2000
     assert body["messages"] == [{"role": "user", "content": "привет"}]
 
 

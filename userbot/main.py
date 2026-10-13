@@ -51,6 +51,7 @@ async def _run() -> None:
         user_id=None if me is None else me.id,
         username=None if me is None else me.username,
         ai_replies=model is not None,
+        openrouter_model=None if model is None else settings.openrouter_model,
     )
     try:
         await idle()

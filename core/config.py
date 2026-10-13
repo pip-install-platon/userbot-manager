@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     ai_replies: bool = False
     openrouter_api_key: SecretStr | None = None
-    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_model: str = "google/gemini-3.5-flash"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     ai_timeout_seconds: float = Field(default=30, gt=0)
 

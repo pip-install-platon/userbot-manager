@@ -7,7 +7,7 @@ import httpx
 from core.ai.persona import ChatTurn
 
 _COMPLETION_PATH = "/chat/completions"
-_MAX_TOKENS = 500
+_MAX_TOKENS = 2000
 
 
 class ReplyModel(Protocol):
