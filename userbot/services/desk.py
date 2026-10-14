@@ -6,7 +6,9 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.ai.openrouter import ReplyModel
-from core.ai.persona import desk_messages
+from core.ai.persona import persona_messages
+from core.ai.reply import usable_reply
+from core.ai.voice import VoiceCandidate, choose_voice
 from core.constants import AI_HISTORY_MESSAGES, MAX_TEXT_LENGTH, Direction, MeetingStatus
 from core.crypto.service import CryptoService
 from core.meetings import service as meetings
@@ -14,7 +16,9 @@ from core.meetings.facts import MeetingExtractor, extract_local, merge_facts
 from core.meetings.phrases import desk_template
 from core.repositories import clients as client_repository
 from core.repositories import messages as message_repository
+from core.repositories import operators as operator_repository
 from core.schemas.events import MeetingOfferEvent, OperatorAlertEvent
+from core.schemas.operator import ProfileContent
 
 log = structlog.get_logger(__name__)
 
@@ -38,6 +42,7 @@ async def conduct(
     async with sessions() as session:
         history = await _history(session, crypto, client_id, operator_id=None)
         cities = await meetings.free_cities(session, redis, crypto)
+        display_name, profile = await _voice(session, redis, crypto)
     latest = history[-1][1] if history else ""
     facts = extract_local(latest, cities)
     if extractor is not None and history:
@@ -45,7 +50,7 @@ async def conduct(
             facts = merge_facts(await extractor.extract(history), facts)
         except Exception:
             log.warning("meeting_extract_failed", client_id=str(client_id))
-    reply = await _model_reply(model, cities, history)
+    reply = await _model_reply(model, display_name, profile, history)
     async with sessions() as session:
         client = await client_repository.get_by_id(session, client_id)
         if client is None:
@@ -136,20 +141,49 @@ async def _history(
     return [(row.direction, crypto.decrypt_text(row.operator_id, row.ciphertext)) for row in rows]
 
 
+async def _voice(
+    session: AsyncSession,
+    redis: Redis,
+    crypto: CryptoService,
+) -> tuple[str, ProfileContent]:
+    free_ids = set(await meetings.free_operator_ids(session, redis))
+    candidates: list[VoiceCandidate] = []
+    for operator_id in await operator_repository.list_active_ids(session):
+        operator = await operator_repository.get_by_id(session, operator_id)
+        if operator is None:
+            continue
+        candidates.append(
+            VoiceCandidate(
+                operator_id=operator.id,
+                display_name=operator.display_name,
+                profile=crypto.decrypt_profile(operator.id, operator.profile_ciphertext),
+                free=operator.id in free_ids,
+            )
+        )
+    chosen = choose_voice(candidates)
+    if chosen is None:
+        return "", ProfileContent()
+    return chosen.display_name, chosen.profile
+
+
 async def _model_reply(
     model: ReplyModel | None,
-    cities: list[str],
+    display_name: str,
+    profile: ProfileContent,
     history: list[tuple[str, str]],
 ) -> str | None:
     if model is None or not any(direction == Direction.INCOMING.value and text.strip() for direction, text in history):
         return None
     try:
-        answer = await model.complete(desk_messages(cities=cities, returning=len(history) > 1, history=history))
+        answer = await model.complete(
+            persona_messages(display_name=display_name, profile=profile, history=history),
+        )
     except Exception:
         log.warning("desk_reply_failed")
         return None
-    cleaned = answer.strip()
-    if not cleaned or len(cleaned) > MAX_TEXT_LENGTH:
+    cleaned = usable_reply(answer)
+    if cleaned is None or len(cleaned) > MAX_TEXT_LENGTH:
+        log.warning("desk_reply_unusable")
         return None
     return cleaned
 

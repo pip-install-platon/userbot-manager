@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.ai.openrouter import ReplyModel
 from core.ai.persona import persona_messages
+from core.ai.reply import usable_reply
 from core.config import Settings
 from core.constants import (
     AI_HISTORY_MESSAGES,
@@ -650,8 +651,8 @@ class UserbotDispatcher:
         except Exception:
             log.warning("ai_reply_failed", operator_id=str(seed.operator_id), client_id=str(seed.client_id))
             return
-        cleaned = answer.strip()
-        if not cleaned or len(cleaned) > MAX_TEXT_LENGTH:
+        cleaned = usable_reply(answer)
+        if cleaned is None or len(cleaned) > MAX_TEXT_LENGTH:
             log.warning("ai_reply_unusable", operator_id=str(seed.operator_id), client_id=str(seed.client_id))
             return
         message_id = uuid.uuid4()

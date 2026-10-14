@@ -60,8 +60,7 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
         media_kind = MediaKind.VIDEO_NOTE.value
         file_id, file_size = _file_ref(message.video_note)
     elif text is None and phone is None:
-        await message.reply("Отправьте текст, фото, видео, кружок или номер.")
-        return None
+        text = bare_marker(_bare_kind(message))
     if file_size is not None and file_size > max_bytes:
         await message.reply("Файл слишком большой.")
         return None
@@ -86,6 +85,33 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
         media_kind=media_kind,
         media_bytes=media_bytes,
     )
+
+
+def bare_marker(kind: str | None) -> str:
+    markers = {
+        "sticker": "[стикер]",
+        "animation": "[гиф]",
+        "voice": "[голосовое]",
+        "audio": "[аудио]",
+        "document": "[файл]",
+    }
+    if kind is None:
+        return "[сообщение]"
+    return markers.get(kind, "[сообщение]")
+
+
+def _bare_kind(message: Message) -> str | None:
+    if message.sticker is not None:
+        return "sticker"
+    if message.animation is not None:
+        return "animation"
+    if message.voice is not None:
+        return "voice"
+    if message.audio is not None:
+        return "audio"
+    if message.document is not None:
+        return "document"
+    return None
 
 
 def _phone(message: Message) -> str | None:

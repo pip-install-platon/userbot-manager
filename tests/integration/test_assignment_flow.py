@@ -344,6 +344,65 @@ async def test_model_failure_leaves_the_dialog_with_the_operator(
     assert any(isinstance(event, IncomingClientMessageEvent) for _channel, event in bus.events)
 
 
+async def test_unassigned_reply_uses_the_operator_voice(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    operator_id = uuid.uuid4()
+    bio = "Уникальная анкета Анны для голоса"
+    async with sessions() as session:
+        await create_operator(
+            session,
+            operator_id=operator_id,
+            telegram_user_id=501,
+            display_name="Анна",
+            profile_ciphertext=crypto.encrypt_profile(
+                operator_id,
+                ProfileContent(bio=bio, city="Казань", age=24),
+            ),
+        )
+        await session.commit()
+    await set_status(redis, operator_id, OperatorStatus.FREE)
+    sender = FakeMessenger()
+    model = _ScriptedModel(
+        [
+            "Привет. Я в Казани, напиши во сколько.",
+            "Первое предложение здесь. Второе тоже. Третье лишнее.",
+            "Сейчас никто не на смене, все отдыхают.",
+        ]
+    )
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus(), model=model)
+
+    async def say(message_id: int, text: str) -> None:
+        await dispatcher.handle_private(
+            IncomingPrivateMessage(telegram_user_id=9001, username="client", message_id=message_id, text=text)
+        )
+
+    await say(1, "привет")
+    await say(2, "[стикер]")
+    await say(3, "ау")
+
+    assert [text for _chat, text in sender.texts] == [
+        "Привет. Я в Казани, напиши во сколько.",
+        "Первое предложение здесь. Второе тоже.",
+        "Привет. Из какого ты города и во сколько удобно?",
+    ]
+    system = model.seen[0][0].content
+    assert bio in system
+    assert "Анна" in system
+    assert "Казань" in system
+    assert "Примеры коротких ответов:" in system
+    assert "на смене" not in system
+    assert "кто свобод" not in system
+    async with sessions() as session:
+        client = await get_by_telegram_user_id(session, 9001)
+    assert client is not None
+    assert client.assigned_operator_id is None
+
+
 async def test_busy_pool_replies_without_assignment(
     redis: Redis,
     sessions: async_sessionmaker[AsyncSession],

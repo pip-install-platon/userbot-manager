@@ -89,9 +89,9 @@ def meeting_card(
 
 def _ask(city: str | None, when_text: str | None) -> str:
     if city and when_text:
-        return f"Записала: {city}, примерно {when_text}. Посмотрю, кто свободен, и пришлю адрес."
+        return f"Записала: {city}, примерно {when_text}."
     if city:
-        return f"Город {city} записала. Напишите, примерно во сколько удобно."
+        return f"{city}. Во сколько удобно?"
     if when_text:
-        return f"Время {when_text} записала. Напишите город."
-    return "Здравствуйте. Напишите город и примерно во сколько вам удобно встретиться."
+        return f"{when_text}. Ты из какого города?"
+    return "Привет. Из какого ты города и во сколько удобно?"

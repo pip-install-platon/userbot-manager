@@ -3,12 +3,20 @@ from collections.abc import Sequence
 from typing import Protocol
 
 import httpx
+import structlog
 
 from core.ai.persona import ChatTurn, extraction_turns
 from core.meetings.facts import MeetingFacts, parse_meeting_facts
 
+log = structlog.get_logger(__name__)
+
 _COMPLETION_PATH = "/chat/completions"
+_MODELS_PATH = "models"
 _MAX_TOKENS = 2000
+_REPLY_TEMPERATURE = 0.4
+_EXTRACT_TEMPERATURE = 0.0
+_REASONING = {"effort": "minimal", "exclude": True}
+_LIMITS = httpx.Limits(max_connections=8, max_keepalive_connections=4, keepalive_expiry=300.0)
 
 
 class ReplyModel(Protocol):
@@ -34,6 +42,7 @@ class OpenRouterClient:
             base_url=base_url,
             timeout=timeout_seconds,
             transport=transport,
+            limits=_LIMITS,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -44,7 +53,22 @@ class OpenRouterClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    async def warm(self) -> bool:
+        try:
+            response = await self._http.get(_MODELS_PATH)
+        except httpx.HTTPError:
+            log.warning("openrouter_warm_failed")
+            return False
+        if response.status_code >= 400:
+            log.warning("openrouter_warm_failed", status_code=response.status_code)
+            return False
+        log.info("openrouter_connection_ready")
+        return True
+
     async def complete(self, messages: Sequence[ChatTurn]) -> str:
+        return await self._post(messages, temperature=_REPLY_TEMPERATURE)
+
+    async def _post(self, messages: Sequence[ChatTurn], *, temperature: float) -> str:
         try:
             response = await self._http.post(
                 _COMPLETION_PATH,
@@ -52,6 +76,8 @@ class OpenRouterClient:
                     "model": self._model,
                     "messages": [turn.model_dump() for turn in messages],
                     "max_tokens": _MAX_TOKENS,
+                    "temperature": temperature,
+                    "reasoning": _REASONING,
                 },
             )
         except httpx.HTTPError as exc:
@@ -64,7 +90,7 @@ class OpenRouterClient:
         turns = extraction_turns(list(history))
         if not any(turn.role == "user" for turn in turns):
             return MeetingFacts()
-        return parse_meeting_facts(await self.complete(turns))
+        return parse_meeting_facts(await self._post(turns, temperature=_EXTRACT_TEMPERATURE))
 
 
 def _completion_text(response: httpx.Response) -> str:

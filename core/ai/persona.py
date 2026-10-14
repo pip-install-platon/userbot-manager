@@ -1,9 +1,13 @@
+from collections.abc import Sequence
 from typing import Literal, assert_never
 
 from pydantic import BaseModel, Field
 
+from core.ai.examples import DialogExample, retrieve_examples
 from core.constants import Direction
 from core.schemas.operator import ProfileContent
+
+_ADULT_AGE = 18
 
 
 class ChatTurn(BaseModel):
@@ -25,30 +29,18 @@ def persona_messages(
     profile: ProfileContent,
     history: list[tuple[str, str]],
 ) -> list[ChatTurn]:
-    return _with_history(_system_prompt(display_name, profile), history)
-
-
-def desk_messages(
-    *,
-    cities: list[str],
-    returning: bool,
-    history: list[tuple[str, str]],
-) -> list[ChatTurn]:
-    where = ", ".join(cities) if cities else "пока никто не на смене"
-    known = "Этот человек уже писал раньше. " if returning else ""
-    system = (
-        "Ты договариваешься о встрече в Telegram. "
-        "Пиши коротко, живым языком, на языке собеседника. "
-        "Не говори, что ты программа или модель. "
-        "Не называй номер телефона и точный адрес: их отправит система отдельно. "
-        "Нужны город и примерное время. "
-        f"{known}Свободные города: {where}."
-    )
-    return _with_history(system, history)
+    examples = retrieve_examples(_latest_incoming(history))
+    return _with_history(_system_prompt(display_name, profile, examples), history)
 
 
 def extraction_turns(history: list[tuple[str, str]]) -> list[ChatTurn]:
     return _with_history(_EXTRACTION_PROMPT, history)
+
+
+def speakable_profile(profile: ProfileContent) -> ProfileContent:
+    if profile.age is not None and profile.age < _ADULT_AGE:
+        return profile.model_copy(update={"age": None})
+    return profile
 
 
 def _with_history(system: str, history: list[tuple[str, str]]) -> list[ChatTurn]:
@@ -61,14 +53,47 @@ def _with_history(system: str, history: list[tuple[str, str]]) -> list[ChatTurn]
     return turns
 
 
-def _system_prompt(display_name: str, profile: ProfileContent) -> str:
+def _system_prompt(display_name: str, profile: ProfileContent, examples: Sequence[DialogExample]) -> str:
+    spoken = speakable_profile(profile)
+    who = f"Тебя зовут {display_name}. " if display_name else ""
+    card = _card(display_name, spoken)
+    card_block = f"\n{card}" if card else ""
     return (
-        f"Ты переписываешься в Telegram от лица {display_name}. "
-        "Отвечай коротко, живым языком, на языке собеседника. "
-        "Не говори, что ты модель или программа. "
-        "Не обещай прислать фото, видео или кружок: их отправляет отдельная система.\n"
-        f"{profile.render(display_name)}"
+        f"{who}Ты пишешь в Telegram лично, от первого лица. "
+        "Собеседник общается с тобой. "
+        "Ответ — максимум два коротких предложения, без списков. "
+        "Не говори, что ты программа, модель или бот. "
+        "Не упоминай смену, занятость и других людей и не обещай что-то у кого-то уточнить. "
+        "Не называй номер телефона и точный адрес. "
+        "Не обещай фото, видео и кружок: их отправляет отдельная система. "
+        "Не выдумывай возраст, город и факты, которых нет в анкете. "
+        "Если не хватает города или примерного времени встречи, спроси только это."
+        f"{card_block}\n"
+        f"{_examples_block(examples)}"
     )
+
+
+def _card(display_name: str, profile: ProfileContent) -> str:
+    if not display_name and profile.age is None and not profile.city and not profile.bio and not profile.tags:
+        return ""
+    return profile.render(display_name or "ты")
+
+
+def _examples_block(examples: Sequence[DialogExample]) -> str:
+    if not examples:
+        return ""
+    lines = ["Примеры коротких ответов:"]
+    for example in examples:
+        lines.append(f"— {example.client}")
+        lines.append(f"— {example.reply}")
+    return "\n".join(lines)
+
+
+def _latest_incoming(history: list[tuple[str, str]]) -> str:
+    for direction, text in reversed(history):
+        if direction == Direction.INCOMING.value and text.strip():
+            return text.strip()
+    return ""
 
 
 def _role(direction: str) -> Literal["user", "assistant"]:
