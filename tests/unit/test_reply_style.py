@@ -25,6 +25,12 @@ def test_reply_stays_short_and_drops_shift_talk() -> None:
     assert usable_reply("Уточню у оператора и напишу.") is None
     assert usable_reply("Я бот, перешлю это дальше.") is None
     assert usable_reply("Это работает.") == "Это работает."
+    assert (
+        usable_reply("Приветик 😘\n\nЧасик 12000, два часика 20000 💕")
+        == "Приветик 😘\nЧасик 12000, два часика 20000 💕"
+    )
+    long_line = "Первое предложение здесь. Второе тоже. Третье лишнее и клиенту не нужно."
+    assert usable_reply(long_line) == "Первое предложение здесь. Второе тоже."
 
 
 def test_voice_prefers_a_filled_free_profile() -> None:

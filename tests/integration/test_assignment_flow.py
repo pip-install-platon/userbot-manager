@@ -118,8 +118,7 @@ async def test_client_message_is_stored_before_an_operator_is_claimed(
     assert sender.texts
     assert sender.texts[0][0] == 9001
     assert "приветик" in sender.texts[0][1].casefold()
-    assert "12000" in sender.texts[0][1]
-    assert "20000" in sender.texts[0][1]
+    assert "город" in sender.texts[0][1].casefold()
     assert not any(isinstance(event, NewClientAssignedEvent) for _channel, event in bus.events)
     assert not any(isinstance(event, IncomingClientMessageEvent) for _channel, event in bus.events)
     assert await redis.get(f"operator:{operator_id}:status") == OperatorStatus.FREE.value
@@ -371,6 +370,7 @@ async def test_unassigned_reply_uses_the_operator_voice(
     sender = FakeMessenger()
     model = _ScriptedModel(
         [
+            "Приветик 😘 Рада тебе",
             "Привет. Я в Казани, напиши во сколько.",
             "Сейчас никто не на смене, все отдыхают.",
         ]
@@ -387,22 +387,18 @@ async def test_unassigned_reply_uses_the_operator_voice(
     await say(3, "ау")
 
     texts = [text for _chat, text in sender.texts]
-    assert texts[0].startswith("Приветик")
-    assert "12000" in texts[0]
-    assert "20000" in texts[0]
-    assert "подружка" in texts[0]
-    assert "26 k" in texts[0]
-    assert "город" not in texts[0].casefold()
+    assert texts[0] == "Приветик 😘 Рада тебе"
     assert texts[1] == "Привет. Я в Казани, напиши во сколько."
     assert "город" in texts[2].casefold()
     assert "на смене" not in texts[2]
-    assert len(model.seen) == 2
-    assert model.seen[0][-1].content == "[стикер]"
+    assert len(model.seen) == 3
+    assert model.seen[0][-1].content == "привет"
     system = model.seen[0][0].content
     assert bio in system
     assert "Анна" in system
     assert "Казань" in system
     assert "Примеры коротких ответов:" in system
+    assert "своими словами" in system
     assert "12000" in system
     assert "на смене" not in system
     assert "кто свобод" not in system
@@ -427,14 +423,14 @@ async def test_busy_pool_replies_without_assignment(
     assert sender.texts
     assert settings.all_operators_busy_text not in {text for _chat, text in sender.texts}
     assert "приветик" in sender.texts[0][1].casefold()
-    assert "12000" in sender.texts[0][1]
+    assert "город" in sender.texts[0][1].casefold()
     async with sessions() as session:
         stored = await get_by_telegram_user_id(session, 42)
     assert stored is not None
     assert stored.assigned_operator_id is None
 
 
-async def test_price_question_repeats_the_card_without_the_model(
+async def test_price_question_uses_the_model(
     redis: Redis,
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -442,7 +438,12 @@ async def test_price_question_repeats_the_card_without_the_model(
     settings = get_settings()
     crypto = CryptoService(settings.master_key_bytes())
     sender = FakeMessenger()
-    model = _ScriptedModel(["это не должно уйти клиенту"])
+    model = _ScriptedModel(
+        [
+            "Приветик 😘",
+            "Часик 12000, два часика 20000 💕",
+        ]
+    )
     dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus(), model=model)
 
     async def say(message_id: int, text: str) -> None:
@@ -452,13 +453,12 @@ async def test_price_question_repeats_the_card_without_the_model(
 
     await say(1, "привет")
     await say(2, "сколько стоит")
-    texts = [text for _chat, text in sender.texts]
-    assert texts[0].startswith("Приветик")
-    assert texts[1].startswith("Стоимость:")
-    assert "12000" in texts[1]
-    assert "20000" in texts[1]
-    assert "26 k" in texts[1]
-    assert model.seen == []
+    assert [text for _chat, text in sender.texts] == [
+        "Приветик 😘",
+        "Часик 12000, два часика 20000 💕",
+    ]
+    assert len(model.seen) == 2
+    assert model.seen[1][-1].content == "сколько стоит"
 
 
 async def test_overt_abuse_is_banned_and_then_ignored(

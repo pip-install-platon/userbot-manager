@@ -25,7 +25,7 @@ def test_persona_uses_profile_and_dialog_roles() -> None:
     assert "Казань" in turns[0].content
     assert "Возраст: 24" in turns[0].content
     assert "Люблю ночные прогулки" in turns[0].content
-    assert "два коротких предложения" in turns[0].content
+    assert "своими словами" in turns[0].content
     assert "12000" in turns[0].content
     assert "20000" in turns[0].content
     assert "26 k" in turns[0].content

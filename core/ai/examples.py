@@ -2,8 +2,6 @@ import math
 import re
 from dataclasses import dataclass
 
-from core.meetings.phrases import PRICE_CARD
-
 _TOKEN = re.compile(r"[a-zа-я0-9]+", re.IGNORECASE)
 
 
@@ -28,7 +26,11 @@ EXAMPLES: tuple[DialogExample, ...] = (
     DialogExample("скинь фото", "Фото кину отдельно 💕", ("фотку", "фотографию", "картинку")),
     DialogExample("скинь кружок", "Кружок кину отдельно 😘", ("кружочек", "видео")),
     DialogExample("ты кто", "Я на связи 😘 Ты из какого города?", ("бот", "человек", "настоящая")),
-    DialogExample("сколько стоит", PRICE_CARD, ("цена", "прайс", "дорого")),
+    DialogExample(
+        "сколько стоит",
+        "Часик 12000, два часика 20000 💕 Подружка есть❤️ Выезд от двух часиков и такси 🚕 уже 26 k",
+        ("цена", "прайс", "дорого"),
+    ),
     DialogExample("как дела", "Всё хорошо 💕 Ты из какого города, солнышко?", ("что делаешь", "как ты")),
     DialogExample("давай перенесём", "Давай, когда тебе нормально? 😊", ("отмени", "не смогу")),
     DialogExample(

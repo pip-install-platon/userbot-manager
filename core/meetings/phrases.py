@@ -1,33 +1,14 @@
-import re
 from typing import assert_never
 
 from core.constants import MeetingStatus
 
-PRICE_CARD = (
+_PRICE_CARD = (
     "Стоимость:\n"
     "12000 часик\n"
     "20000 два часика\n"
     "Есть подружка❤️\n"
     "Есть выезд, от двух часиков + оплата такси 🚕 26 k"
 )
-
-_PRICE_TOKENS = frozenset(
-    {
-        "сколько",
-        "стоит",
-        "цена",
-        "цене",
-        "цену",
-        "цены",
-        "ценой",
-        "прайс",
-        "прайса",
-        "стоимость",
-        "стоимости",
-        "почем",
-    }
-)
-_TOKEN = re.compile(r"[а-яa-z0-9]+")
 
 
 def status_title(status: MeetingStatus) -> str:
@@ -44,33 +25,6 @@ def status_title(status: MeetingStatus) -> str:
             return "отменена"
         case _ as unreachable:
             assert_never(unreachable)
-
-
-def hello_card() -> str:
-    return f"Приветик 😘\n\n{PRICE_CARD}"
-
-
-def price_card() -> str:
-    return PRICE_CARD
-
-
-def opening_reply(city: str | None, when_text: str | None) -> str:
-    if city and when_text:
-        lead = f"Приветик 😘 {city}, примерно {when_text} 😊"
-    elif city:
-        lead = f"Приветик 😘 {city}, поняла 💕 Во сколько тебе удобно?"
-    elif when_text:
-        lead = f"Приветик 😘 {when_text} вижу 😊 А ты из какого города?"
-    else:
-        return hello_card()
-    return f"{lead}\n\n{PRICE_CARD}"
-
-
-def wants_price(text: str) -> bool:
-    folded = text.casefold().replace("ё", "е")
-    if "по чем" in folded:
-        return True
-    return bool(_PRICE_TOKENS.intersection(_TOKEN.findall(folded)))
 
 
 def desk_template(*, city: str | None, when_text: str | None, status: MeetingStatus) -> str:
@@ -151,7 +105,7 @@ def meeting_card(
 
 def _ask(city: str | None, when_text: str | None) -> str:
     if city and when_text:
-        return f"Ага, {city}, примерно {when_text} 😊\n\n{PRICE_CARD}"
+        return f"Ага, {city}, примерно {when_text} 😊\n\n{_PRICE_CARD}"
     if city:
         return f"{city}, поняла 💕 Во сколько тебе удобно, солнышко?"
     if when_text:

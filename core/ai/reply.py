@@ -2,6 +2,8 @@ import re
 
 _MAX_CHARS = 180
 _MAX_SENTENCES = 2
+_PASSTHROUGH_CHARS = 400
+_PASSTHROUGH_LINES = 8
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
 _LEAK = re.compile(
     r"на смен|никто не|все отдыха|оператор|уточню у|кто свобод|перешл|пересыл|систем|"
@@ -26,7 +28,13 @@ def tighten(text: str) -> str:
 
 
 def usable_reply(text: str) -> str | None:
-    cleaned = tighten(text)
+    stripped = text.strip()
+    if not stripped or _LEAK.search(stripped):
+        return None
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if 1 < len(lines) <= _PASSTHROUGH_LINES and len(stripped) <= _PASSTHROUGH_CHARS:
+        return "\n".join(lines)
+    cleaned = tighten(stripped)
     if not cleaned or _LEAK.search(cleaned):
         return None
     return cleaned
