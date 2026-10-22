@@ -16,7 +16,7 @@ from core.db.models import Client
 from core.redis.media import profile_media_key, store_profile_media
 from core.redis.status import set_status
 from core.repositories.clients import get_by_telegram_user_id
-from core.repositories.messages import list_dialog
+from core.repositories.messages import list_dialog, list_recent_desk
 from core.repositories.operators import add_media, create_operator
 from core.schemas.client import IncomingPrivateMessage
 from core.schemas.events import AiReplyEvent, IncomingClientMessageEvent, NewClientAssignedEvent
@@ -117,7 +117,9 @@ async def test_client_message_is_stored_before_an_operator_is_claimed(
 
     assert sender.texts
     assert sender.texts[0][0] == 9001
-    assert "город" in sender.texts[0][1].lower()
+    assert "приветик" in sender.texts[0][1].casefold()
+    assert "12000" in sender.texts[0][1]
+    assert "20000" in sender.texts[0][1]
     assert not any(isinstance(event, NewClientAssignedEvent) for _channel, event in bus.events)
     assert not any(isinstance(event, IncomingClientMessageEvent) for _channel, event in bus.events)
     assert await redis.get(f"operator:{operator_id}:status") == OperatorStatus.FREE.value
@@ -370,7 +372,6 @@ async def test_unassigned_reply_uses_the_operator_voice(
     model = _ScriptedModel(
         [
             "Привет. Я в Казани, напиши во сколько.",
-            "Первое предложение здесь. Второе тоже. Третье лишнее.",
             "Сейчас никто не на смене, все отдыхают.",
         ]
     )
@@ -385,16 +386,24 @@ async def test_unassigned_reply_uses_the_operator_voice(
     await say(2, "[стикер]")
     await say(3, "ау")
 
-    assert [text for _chat, text in sender.texts] == [
-        "Привет. Я в Казани, напиши во сколько.",
-        "Первое предложение здесь. Второе тоже.",
-        "Привет 🙂 Ты из какого города и во сколько тебе удобно?",
-    ]
+    texts = [text for _chat, text in sender.texts]
+    assert texts[0].startswith("Приветик")
+    assert "12000" in texts[0]
+    assert "20000" in texts[0]
+    assert "подружка" in texts[0]
+    assert "26 k" in texts[0]
+    assert "город" not in texts[0].casefold()
+    assert texts[1] == "Привет. Я в Казани, напиши во сколько."
+    assert "город" in texts[2].casefold()
+    assert "на смене" not in texts[2]
+    assert len(model.seen) == 2
+    assert model.seen[0][-1].content == "[стикер]"
     system = model.seen[0][0].content
     assert bio in system
     assert "Анна" in system
     assert "Казань" in system
     assert "Примеры коротких ответов:" in system
+    assert "12000" in system
     assert "на смене" not in system
     assert "кто свобод" not in system
     async with sessions() as session:
@@ -417,8 +426,86 @@ async def test_busy_pool_replies_without_assignment(
     )
     assert sender.texts
     assert settings.all_operators_busy_text not in {text for _chat, text in sender.texts}
-    assert "город" in sender.texts[0][1].lower()
+    assert "приветик" in sender.texts[0][1].casefold()
+    assert "12000" in sender.texts[0][1]
     async with sessions() as session:
         stored = await get_by_telegram_user_id(session, 42)
     assert stored is not None
     assert stored.assigned_operator_id is None
+
+
+async def test_price_question_repeats_the_card_without_the_model(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    sender = FakeMessenger()
+    model = _ScriptedModel(["это не должно уйти клиенту"])
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus(), model=model)
+
+    async def say(message_id: int, text: str) -> None:
+        await dispatcher.handle_private(
+            IncomingPrivateMessage(telegram_user_id=77, username="client", message_id=message_id, text=text)
+        )
+
+    await say(1, "привет")
+    await say(2, "сколько стоит")
+    texts = [text for _chat, text in sender.texts]
+    assert texts[0].startswith("Приветик")
+    assert texts[1].startswith("Стоимость:")
+    assert "12000" in texts[1]
+    assert "20000" in texts[1]
+    assert "26 k" in texts[1]
+    assert model.seen == []
+
+
+async def test_overt_abuse_is_banned_and_then_ignored(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    sender = FakeMessenger()
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus())
+    await dispatcher.handle_private(
+        IncomingPrivateMessage(telegram_user_id=9001, username="client", message_id=1, text="иди нахуй")
+    )
+    await dispatcher.handle_private(
+        IncomingPrivateMessage(telegram_user_id=9001, username="client", message_id=2, text="привет")
+    )
+    assert sender.texts == []
+    async with sessions() as session:
+        client = await get_by_telegram_user_id(session, 9001)
+        assert client is not None
+        assert client.is_banned is True
+        assert await list_recent_desk(session, client_id=client.id, limit=10) == []
+
+
+async def test_operator_dm_is_not_banned(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    settings = get_settings()
+    crypto = CryptoService(settings.master_key_bytes())
+    operator_id = uuid.uuid4()
+    async with sessions() as session:
+        await create_operator(
+            session,
+            operator_id=operator_id,
+            telegram_user_id=501,
+            display_name="Анна",
+            profile_ciphertext=crypto.encrypt_profile(operator_id, ProfileContent()),
+        )
+        await session.commit()
+    sender = FakeMessenger()
+    dispatcher = UserbotDispatcher(settings, sessions, redis, crypto, sender, RecordingBus())
+    await dispatcher.handle_private(
+        IncomingPrivateMessage(telegram_user_id=501, username="anna", message_id=1, text="нахуй")
+    )
+    assert sender.texts == []
+    async with sessions() as session:
+        assert await get_by_telegram_user_id(session, 501) is None

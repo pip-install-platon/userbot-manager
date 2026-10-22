@@ -13,7 +13,7 @@ from core.constants import AI_HISTORY_MESSAGES, MAX_TEXT_LENGTH, Direction, Meet
 from core.crypto.service import CryptoService
 from core.meetings import service as meetings
 from core.meetings.facts import MeetingExtractor, extract_local, merge_facts
-from core.meetings.phrases import desk_template
+from core.meetings.phrases import desk_template, opening_reply, price_card, wants_price
 from core.repositories import clients as client_repository
 from core.repositories import messages as message_repository
 from core.repositories import operators as operator_repository
@@ -50,14 +50,23 @@ async def conduct(
             facts = merge_facts(await extractor.extract(history), facts)
         except Exception:
             log.warning("meeting_extract_failed", client_id=str(client_id))
-    reply = await _model_reply(model, display_name, profile, history)
+    opening = _is_opening(history)
+    asking_price = wants_price(latest)
+    reply = None
+    if not opening and not asking_price:
+        reply = await _model_reply(model, display_name, profile, history)
     async with sessions() as session:
         client = await client_repository.get_by_id(session, client_id)
         if client is None:
             return DeskOutcome()
         advance = await meetings.apply_client_facts(session, redis, crypto, client, facts)
+        scripted = None
+        if advance.forced_reply is None and opening:
+            scripted = opening_reply(advance.city, advance.when_text)
+        elif advance.forced_reply is None and asking_price:
+            scripted = price_card()
         text = _choose_reply(
-            advance.forced_reply,
+            advance.forced_reply or scripted,
             reply,
             advance.city,
             advance.when_text,
@@ -186,6 +195,18 @@ async def _model_reply(
         log.warning("desk_reply_unusable")
         return None
     return cleaned
+
+
+def _is_opening(history: list[tuple[str, str]]) -> bool:
+    incoming = 0
+    for direction, text in history:
+        if not text.strip():
+            continue
+        if direction == Direction.OUTGOING.value:
+            return False
+        if direction == Direction.INCOMING.value:
+            incoming += 1
+    return incoming == 1
 
 
 def _choose_reply(

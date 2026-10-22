@@ -92,6 +92,7 @@ class Client(Base):
         index=True,
     )
     state: Mapped[str] = mapped_column(String(32), default=ClientState.NEW.value)
+    is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false(), default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

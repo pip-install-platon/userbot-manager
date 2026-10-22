@@ -32,6 +32,7 @@ from core.crypto.service import CryptoService
 from core.db.models import Client, Operator
 from core.meetings.facts import MeetingExtractor
 from core.meetings.phrases import circle_received
+from core.moderation.abuse import is_abuse
 from core.redis import media as media_store
 from core.redis import pending as pending_store
 from core.redis import status as operator_status
@@ -213,7 +214,8 @@ class UserbotDispatcher:
             structlog.contextvars.clear_contextvars()
 
     async def _handle_private(self, message: IncomingPrivateMessage) -> None:
-        if message.text is not None and len(message.text) > MAX_TEXT_LENGTH:
+        abusive = message.text is not None and is_abuse(message.text)
+        if message.text is not None and not abusive and len(message.text) > MAX_TEXT_LENGTH:
             await self._sender.send_text(message.telegram_user_id, "Сообщение слишком длинное.")
             return
         if message.media_bytes is not None and len(message.media_bytes) > self._settings.media_max_bytes:
@@ -234,6 +236,8 @@ class UserbotDispatcher:
             try:
                 if await self._is_operator(session, message.telegram_user_id):
                     log.info("ignore_operator_dm", telegram_user_id=message.telegram_user_id)
+                    return
+                if await self._blocked_client(session, message, abusive):
                     return
                 if not self._settings.auto_assign:
                     existing_pending = await pending_store.load_pending(
@@ -543,6 +547,26 @@ class UserbotDispatcher:
             client.state = ClientState.NEW.value
             return None
         return operator
+
+    async def _blocked_client(
+        self,
+        session: AsyncSession,
+        message: IncomingPrivateMessage,
+        abusive: bool,
+    ) -> bool:
+        client = await client_repository.get_or_create(
+            session,
+            telegram_user_id=message.telegram_user_id,
+            username=message.username,
+            phone_number=message.phone_number,
+        )
+        if not client.is_banned and not abusive:
+            return False
+        if abusive:
+            client.is_banned = True
+        await session.commit()
+        log.info("client_banned", telegram_user_id=message.telegram_user_id)
+        return True
 
     async def _is_operator(self, session: AsyncSession, telegram_user_id: int) -> bool:
         now = time.monotonic()

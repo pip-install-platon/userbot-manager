@@ -28,10 +28,10 @@ def missing_album_text(display_name: str, kind: MediaKind) -> str:
     del display_name
     match kind:
         case MediaKind.PHOTO:
-            return "Фото пока нет, скину как будут 🙂"
+            return "Фото пока нет, скину как будут 💕"
         case MediaKind.VIDEO:
-            return "Видео пока нет, скину как будут 🙂"
+            return "Видео пока нет, скину как будут 💕"
         case MediaKind.VIDEO_NOTE:
-            return "Кружков пока нет 🙂"
+            return "Кружков пока нет 😘"
         case _ as unreachable:
             assert_never(unreachable)
