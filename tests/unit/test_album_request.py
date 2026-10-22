@@ -16,6 +16,7 @@ def test_ignores_ordinary_and_long_text() -> None:
     assert detect_album_request("фото " * 40) is None
 
 
-def test_missing_album_names_the_operator() -> None:
-    assert missing_album_text("Питон", MediaKind.PHOTO) == "В альбоме Питон пока нет фото."
-    assert missing_album_text("Питон", MediaKind.VIDEO_NOTE) == "В альбоме Питон пока нет кружков."
+def test_missing_album_sounds_like_the_person() -> None:
+    assert missing_album_text("Питон", MediaKind.PHOTO) == "Фото пока нет, скину как будут 🙂"
+    assert missing_album_text("Питон", MediaKind.VIDEO_NOTE) == "Кружков пока нет 🙂"
+    assert "оператор" not in missing_album_text("Питон", MediaKind.VIDEO).casefold()

@@ -230,7 +230,7 @@ async def test_photo_request_uses_assigned_operator_album(
     assert await redis.get(profile_media_key(first.id))
 
     await say(4, "кружочек")
-    assert any("пока нет кружков" in text for _chat, text in sender.texts)
+    assert any("кружков пока нет" in text.casefold() for _chat, text in sender.texts)
     assert sender.video_notes == []
 
 

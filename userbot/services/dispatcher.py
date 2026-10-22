@@ -208,10 +208,7 @@ class UserbotDispatcher:
             if event.text:
                 await self._sender.send_text(event.client_telegram_id, event.text)
                 return
-            await self._sender.send_text(
-                event.client_telegram_id,
-                "Оператор отправил вложение, но файл уже недоступен.",
-            )
+            await self._sender.send_text(event.client_telegram_id, "Файл не открылся, кинь ещё раз 🙂")
         finally:
             structlog.contextvars.clear_contextvars()
 
@@ -480,10 +477,8 @@ class UserbotDispatcher:
             )
             if inserted:
                 ai_reply = self._ai_seed(client, operator, message)
-            display_name = operator.display_name
             await session.commit()
         await pending_store.delete_pending(self._redis, telegram_user_id)
-        await self._sender.send_text(telegram_user_id, f"Вы подключены к оператору {display_name}.")
         await self._play(album)
         await self._publish_all(events)
         if ai_reply is not None:

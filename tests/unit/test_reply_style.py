@@ -20,8 +20,11 @@ def test_reply_stays_short_and_drops_shift_talk() -> None:
     long = "Первое предложение здесь. Второе тоже. Третье лишнее и клиенту не нужно."
     assert tighten(long) == "Первое предложение здесь. Второе тоже."
     assert usable_reply("я свободна вечером") == "я свободна вечером"
+    assert usable_reply("Скинь кружочек, я гляну 🙂") == "Скинь кружочек, я гляну 🙂"
     assert usable_reply("Сейчас никто не на смене, все отдыхают.") is None
     assert usable_reply("Уточню у оператора и напишу.") is None
+    assert usable_reply("Я бот, перешлю это дальше.") is None
+    assert usable_reply("Это работает.") == "Это работает."
 
 
 def test_voice_prefers_a_filled_free_profile() -> None:

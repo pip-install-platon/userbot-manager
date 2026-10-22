@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     ai_timeout_seconds: float = Field(default=30, gt=0)
 
-    all_operators_busy_text: str = "Все операторы заняты, попробуйте позже."
+    all_operators_busy_text: str = "Сейчас не могу, напиши чуть позже 🙂"
     auto_assign: bool = True
     superadmin_telegram_id: int | None = None
     superadmin_display_name: str = "Superadmin"

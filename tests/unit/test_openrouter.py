@@ -32,6 +32,9 @@ def test_persona_uses_profile_and_dialog_roles() -> None:
     assert "Примеры коротких ответов:" in turns[0].content
     assert "на смене" not in turns[0].content
     assert "кто свобод" not in turns[0].content
+    assert "бот" not in turns[0].content.casefold()
+    assert "оператор" not in turns[0].content.casefold()
+    assert "перешл" not in turns[0].content.casefold()
     assert [(turn.role, turn.content) for turn in turns[1:]] == [
         ("user", "Привет"),
         ("assistant", "И тебе"),
