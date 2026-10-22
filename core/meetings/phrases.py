@@ -22,9 +22,9 @@ def status_title(status: MeetingStatus) -> str:
 def desk_template(*, city: str | None, when_text: str | None, status: MeetingStatus) -> str:
     match status:
         case MeetingStatus.ADDRESS_SENT:
-            return "Если встреча в силе, напишите «да»."
+            return "Жду кружочек 🙂"
         case MeetingStatus.PHONE_SHARED | MeetingStatus.CONFIRMED:
-            return "Если нужно что-то уточнить по встрече — напишите."
+            return "Если что, пиши 🙂"
         case MeetingStatus.DISCUSSION | MeetingStatus.TENTATIVE:
             return _ask(city, when_text)
         case MeetingStatus.COMPLETED | MeetingStatus.CANCELLED:
@@ -34,32 +34,37 @@ def desk_template(*, city: str | None, when_text: str | None, status: MeetingSta
 
 
 def explain_address(address: str) -> str:
-    return f"Можем встретиться примерно здесь: {address}. Напишите «да», если это время и место вам подходят."
+    return f"Давай тогда около {address} 🙂 {ask_circle()}"
 
 
 def explain_address_missing() -> str:
-    return "Адрес ещё уточняю. Напишу, как только будет понятно, куда подходить."
+    return f"Место ещё прикину и напишу 🙂 {ask_circle()}"
 
 
 def explain_phone(phone: str) -> str:
-    return f"Встреча в силе. Позвоните, чтобы окончательно договориться: {phone}"
+    return f"Тогда созваниваемся, мой номер {phone} 🙂"
 
 
 def explain_phone_missing() -> str:
-    return "Встреча в силе. Номер для звонка сейчас уточняю и сразу пришлю."
+    return "Номер сейчас допишу и кину сюда 🙂"
 
 
 def explain_reschedule(when_text: str | None) -> str:
     when = when_text or "это время"
-    return (
-        f"По времени «{when}» лучше перенести встречу. "
-        "Напишите, пожалуйста, другой день и примерно во сколько вам удобно."
-    )
+    return f"Лучше перенести, «{when}» не выходит. Когда тебе нормально? 🙂"
 
 
 def explain_cancel(city: str | None) -> str:
     place = f" в городе {city}" if city else ""
-    return f"Встречу{place} придётся отменить. Если захотите договориться снова — просто напишите."
+    return f"Слушай, встречу{place} придётся отменить. Если надумаешь ещё, просто напиши 🙂"
+
+
+def ask_circle() -> str:
+    return "Скинь кружочек, хочу глянуть, что ты в порядке. Если будешь нетрезвый или под чем-то, встречи не будет."
+
+
+def circle_received() -> str:
+    return "Вижу, спасибо 🙂"
 
 
 def meeting_card(
@@ -89,9 +94,12 @@ def meeting_card(
 
 def _ask(city: str | None, when_text: str | None) -> str:
     if city and when_text:
-        return f"Записала: {city}, примерно {when_text}."
+        return f"Ага, {city}, примерно {when_text} 🙂 {_PRICE}"
     if city:
-        return f"{city}. Во сколько удобно?"
+        return f"{city}, поняла 🙂 Во сколько тебе удобно?"
     if when_text:
-        return f"{when_text}. Ты из какого города?"
-    return "Привет. Из какого ты города и во сколько удобно?"
+        return f"{when_text} вижу 🙂 А ты из какого города?"
+    return "Привет 🙂 Ты из какого города и во сколько тебе удобно?"
+
+
+_PRICE = "Час 12 тысяч, выезд от двух часов, с такси на старте уже 26."

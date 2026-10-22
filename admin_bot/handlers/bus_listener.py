@@ -122,7 +122,13 @@ async def _notify_incoming(
         chat_id = operator.telegram_user_id
     label = f"@{event.client_username}" if event.client_username else str(event.client_telegram_id)
     body = event.text or ""
-    text = f"Сообщение от {h(label)}:\n{h(body) if body else 'Вложение'}"
+    if event.media_kind == MediaKind.VIDEO_NOTE:
+        text = (
+            f"Кружочек от {h(label)}. "
+            "Если по нему видно, что клиент нетрезвый, нажмите «Отменить» во встрече."
+        )
+    else:
+        text = f"Сообщение от {h(label)}:\n{h(body) if body else 'Вложение'}"
     await _safe_send(bot, chat_id, text, event.operator_id)
     if event.media_redis_key is None or event.media_kind is None:
         return

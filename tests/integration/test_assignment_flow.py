@@ -388,7 +388,7 @@ async def test_unassigned_reply_uses_the_operator_voice(
     assert [text for _chat, text in sender.texts] == [
         "Привет. Я в Казани, напиши во сколько.",
         "Первое предложение здесь. Второе тоже.",
-        "Привет. Из какого ты города и во сколько удобно?",
+        "Привет 🙂 Ты из какого города и во сколько тебе удобно?",
     ]
     system = model.seen[0][0].content
     assert bio in system

@@ -31,6 +31,7 @@ from core.constants import (
 from core.crypto.service import CryptoService
 from core.db.models import Client, Operator
 from core.meetings.facts import MeetingExtractor
+from core.meetings.phrases import circle_received
 from core.redis import media as media_store
 from core.redis import pending as pending_store
 from core.redis import status as operator_status
@@ -230,6 +231,7 @@ class UserbotDispatcher:
         ai_reply: AiReplySeed | None = None
         desk_client_id: uuid.UUID | None = None
         confirm_seed: tuple[uuid.UUID, uuid.UUID, str] | None = None
+        circle_ack: tuple[uuid.UUID, uuid.UUID, int] | None = None
 
         async with self._sessions() as session:
             try:
@@ -344,14 +346,17 @@ class UserbotDispatcher:
                         )
                     )
                     inserted = await self._queue_incoming(session, client, operator, message, events)
-                    waiting_for_yes = (
-                        inserted and message.text is not None and await self._waiting_for_client(session, client.id)
-                    )
-                    if waiting_for_yes and message.text is not None:
-                        confirm_seed = (operator.id, client.id, message.text)
-                        ai_reply = self._ai_seed(client, operator, message)
-                    elif inserted:
-                        ai_reply = self._ai_seed(client, operator, message)
+                    if inserted and message.media_kind == MediaKind.VIDEO_NOTE.value:
+                        circle_ack = (operator.id, client.id, message.telegram_user_id)
+                    else:
+                        waiting_for_yes = (
+                            inserted and message.text is not None and await self._waiting_for_client(session, client.id)
+                        )
+                        if waiting_for_yes and message.text is not None:
+                            confirm_seed = (operator.id, client.id, message.text)
+                            ai_reply = self._ai_seed(client, operator, message)
+                        elif inserted:
+                            ai_reply = self._ai_seed(client, operator, message)
                 await session.commit()
                 persisted = True
             except Exception:
@@ -403,8 +408,28 @@ class UserbotDispatcher:
             if confirmed is not None:
                 await self._deliver_desk(message.telegram_user_id, confirmed)
                 return
+        if circle_ack is not None:
+            operator_id, client_id, chat_id = circle_ack
+            await self._ack_circle(operator_id, client_id, chat_id)
+            return
         if ai_reply is not None:
             await self._send_ai_reply(ai_reply)
+
+    async def _ack_circle(self, operator_id: uuid.UUID, client_id: uuid.UUID, chat_id: int) -> None:
+        text = circle_received()
+        async with self._sessions() as session:
+            await message_repository.insert_message(
+                session,
+                message_id=uuid.uuid4(),
+                client_id=client_id,
+                operator_id=operator_id,
+                direction=Direction.OUTGOING.value,
+                ciphertext=self._crypto.encrypt_for_operator(operator_id, text.encode()),
+                media_file_id=None,
+                telegram_message_id=None,
+            )
+            await session.commit()
+        await self._sender.send_text(chat_id, text)
 
     async def _waiting_for_client(self, session: AsyncSession, client_id: uuid.UUID) -> bool:
         meeting = await meeting_repository.get_open(session, client_id)

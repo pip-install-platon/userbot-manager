@@ -7,19 +7,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from admin_bot.services.heartbeat import _persist_live, _restore_missing
 from core.config import get_settings
-from core.constants import CHANNEL_MEETING_OFFER, CHANNEL_OPERATOR_ALERT, MeetingStatus, OperatorStatus
+from core.constants import (
+    CHANNEL_INCOMING_CLIENT_MESSAGE,
+    CHANNEL_MEETING_OFFER,
+    CHANNEL_OPERATOR_ALERT,
+    MediaKind,
+    MeetingStatus,
+    OperatorStatus,
+)
 from core.crypto.service import CryptoService
 from core.db.base import Base
 from core.db.models import Meeting, OperatorAvailability
 from core.meetings.service import ClaimCode, cancel, claim, complete, confirm_call, reschedule, send_phone
-from admin_bot.services.heartbeat import _persist_live, _restore_missing
 from core.redis.status import get_status, set_status, status_key
 from core.repositories.clients import get_by_telegram_user_id
 from core.repositories.meetings import get_open, latest
 from core.repositories.operators import create_operator, save_profile_ciphertext
 from core.schemas.client import IncomingPrivateMessage
-from core.schemas.events import MeetingOfferEvent, OperatorAlertEvent
+from core.schemas.events import IncomingClientMessageEvent, MeetingOfferEvent, OperatorAlertEvent
 from core.schemas.operator import ProfileContent
 from tests.fakes import FakeMessenger, RecordingBus
 from userbot.services.dispatcher import UserbotDispatcher
@@ -184,7 +191,56 @@ async def test_tentative_offer_reaches_only_the_free_operator(
     assert first.code == ClaimCode.CLAIMED
     assert first.reply is not None
     assert "у метро" in first.reply
+    assert "кружочек" in first.reply
+    assert "нетрезвый" in first.reply
+    assert "напишите" not in first.reply.casefold()
     assert second.code == ClaimCode.LOST
+
+
+async def test_circle_after_claim_goes_to_that_operator(
+    redis: Redis,
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    get_settings.cache_clear()
+    crypto = CryptoService(get_settings().master_key_bytes())
+    operator_id = await _operator(
+        sessions,
+        crypto,
+        telegram_user_id=501,
+        name="Анна",
+        profile=ProfileContent(city="Казань", approx_address="у метро"),
+    )
+    await set_status(redis, operator_id, OperatorStatus.FREE)
+    sender = FakeMessenger()
+    bus = RecordingBus()
+    dispatcher = _dispatcher(sessions, redis, crypto, sender, bus)
+    await dispatcher.handle_private(
+        IncomingPrivateMessage(telegram_user_id=9001, username="client", message_id=1, text="Казань в 19:00")
+    )
+    async with sessions() as session:
+        client = await get_by_telegram_user_id(session, 9001)
+        assert client is not None
+        meeting = await get_open(session, client.id)
+        assert meeting is not None
+        await claim(session, redis, crypto, meeting_id=meeting.id, operator_id=operator_id)
+        await session.commit()
+    await dispatcher.handle_private(
+        IncomingPrivateMessage(
+            telegram_user_id=9001,
+            username="client",
+            message_id=2,
+            media_kind=MediaKind.VIDEO_NOTE.value,
+            media_file_id="circle-1",
+            media_bytes=b"circle",
+        )
+    )
+    assert any("спасибо" in text.casefold() for _chat, text in sender.texts)
+    notes = [event for channel, event in bus.events if channel == CHANNEL_INCOMING_CLIENT_MESSAGE]
+    assert len(notes) == 1
+    assert isinstance(notes[0], IncomingClientMessageEvent)
+    assert notes[0].operator_id == operator_id
+    assert notes[0].media_kind == MediaKind.VIDEO_NOTE
+    assert notes[0].media_redis_key
 
 
 async def test_client_confirmation_shares_phone_and_the_call_marks_busy(
