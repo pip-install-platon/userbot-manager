@@ -7,18 +7,22 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     LargeBinary,
     String,
     UniqueConstraint,
     Uuid,
     false,
     func,
+    text,
     true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from core.constants import ClientState, Direction, MediaKind
+from core.constants import OPEN_MEETING_STATUSES, ClientState, Direction, MediaKind, MeetingStatus, OperatorStatus
 from core.db.base import Base
+
+_OPEN_MEETING_SQL = "status IN ('" + "', '".join(status.value for status in OPEN_MEETING_STATUSES) + "')"
 
 
 class Operator(Base):
@@ -72,9 +76,7 @@ class Client(Base):
     __tablename__ = "clients"
     __table_args__ = (
         CheckConstraint(
-            "state IN ('"
-            + "', '".join(state.value for state in ClientState)
-            + "')",
+            "state IN ('" + "', '".join(state.value for state in ClientState) + "')",
             name="state",
         ),
     )
@@ -82,6 +84,7 @@ class Client(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     assigned_operator_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("operators.id", ondelete="SET NULL"),
@@ -89,6 +92,7 @@ class Client(Base):
         index=True,
     )
     state: Mapped[str] = mapped_column(String(32), default=ClientState.NEW.value)
+    is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false(), default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -123,9 +127,10 @@ class Message(Base):
         ForeignKey("clients.id", ondelete="CASCADE"),
         index=True,
     )
-    operator_id: Mapped[uuid.UUID] = mapped_column(
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("operators.id", ondelete="RESTRICT"),
+        nullable=True,
         index=True,
     )
     direction: Mapped[str] = mapped_column(String(8))
@@ -133,6 +138,79 @@ class Message(Base):
     media_file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class OperatorAvailability(Base):
+    __tablename__ = "operator_statuses"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('" + "', '".join(item.value for item in OperatorStatus) + "')",
+            name="status",
+        ),
+    )
+
+    operator_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("operators.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(String(16))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class Meeting(Base):
+    __tablename__ = "meetings"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('" + "', '".join(item.value for item in MeetingStatus) + "')",
+            name="status",
+        ),
+        Index(
+            "uq_meetings_one_open_client",
+            "client_id",
+            unique=True,
+            postgresql_where=text(_OPEN_MEETING_SQL),
+            sqlite_where=text(_OPEN_MEETING_SQL),
+        ),
+        Index(
+            "uq_meetings_one_open_operator",
+            "operator_id",
+            unique=True,
+            postgresql_where=text(f"operator_id IS NOT NULL AND {_OPEN_MEETING_SQL}"),
+            sqlite_where=text(f"operator_id IS NOT NULL AND {_OPEN_MEETING_SQL}"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("clients.id", ondelete="CASCADE"),
+        index=True,
+    )
+    operator_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("operators.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32))
+    city: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    when_text: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    client_ready: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,

@@ -2,13 +2,16 @@ import structlog
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from admin_bot.keyboards.main_menu import STATUS_TITLE, main_menu, parse_status, shift_status
 from admin_bot.ui import edit_callback_message, h
-from core.constants import CHANNEL_OPERATOR_STATUS_CHANGED, OperatorStatus
+from core.constants import CHANNEL_MEETING_OFFER, CHANNEL_OPERATOR_STATUS_CHANGED, OperatorStatus
 from core.db.models import Operator
+from core.meetings.service import offers_for_operator
 from core.redis.bus import RedisEventBus
 from core.redis.status import get_status, set_status
+from core.repositories.operator_status import upsert_status
 from core.schemas.events import OperatorStatusChangedEvent
 
 router = Router(name="status")
@@ -28,7 +31,12 @@ async def show_current_status(callback: CallbackQuery, operator: Operator, redis
 
 
 @router.callback_query(F.data.startswith("status:"))
-async def change_status(callback: CallbackQuery, operator: Operator, redis: Redis) -> None:
+async def change_status(
+    callback: CallbackQuery,
+    operator: Operator,
+    redis: Redis,
+    session: AsyncSession,
+) -> None:
     raw = (callback.data or "").split(":", maxsplit=1)[1]
     current = parse_status(await get_status(redis, operator.id))
     if raw == "prev":
@@ -40,12 +48,17 @@ async def change_status(callback: CallbackQuery, operator: Operator, redis: Redi
     else:
         await callback.answer("Неизвестный статус.")
         return
+    await upsert_status(session, operator.id, status.value)
     await set_status(redis, operator.id, status)
+    bus = RedisEventBus(redis)
     try:
-        await RedisEventBus(redis).publish(
+        await bus.publish(
             CHANNEL_OPERATOR_STATUS_CHANGED,
             OperatorStatusChangedEvent(operator_id=operator.id, status=status),
         )
+        if status == OperatorStatus.FREE:
+            for offer in await offers_for_operator(session, operator.id):
+                await bus.publish(CHANNEL_MEETING_OFFER, offer)
     except Exception:
         log.error("status_event_failed", operator_id=str(operator.id))
     log.info("operator_status_changed", operator_id=str(operator.id), status=status.value)

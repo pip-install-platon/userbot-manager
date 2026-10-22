@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.constants import DIALOG_HISTORY_LIMIT, Direction
 from core.crypto.service import CryptoService
 from core.repositories.clients import get_owned
-from core.repositories.messages import insert_message, list_dialog
+from core.repositories.messages import insert_message, list_visible_dialog
 
 
 async def load_dialog_for_operator(
@@ -19,7 +19,7 @@ async def load_dialog_for_operator(
     client = await get_owned(session, client_id, operator_id)
     if client is None:
         return None
-    rows = await list_dialog(
+    rows = await list_visible_dialog(
         session,
         client_id=client_id,
         operator_id=operator_id,
@@ -27,7 +27,7 @@ async def load_dialog_for_operator(
     )
     history: list[tuple[str, datetime, str]] = []
     for row in rows:
-        text = crypto.decrypt_for_operator(operator_id, row.ciphertext).decode()
+        text = crypto.decrypt_text(row.operator_id, row.ciphertext)
         history.append((row.direction, row.created_at, text))
     return history
 

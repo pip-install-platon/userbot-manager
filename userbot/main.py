@@ -18,6 +18,8 @@ from userbot.services.sender import PyrogramMessenger
 
 log = structlog.get_logger(__name__)
 
+_WARM_INTERVAL_SECONDS = 45.0
+
 
 async def _run() -> None:
     settings = get_settings()
@@ -38,12 +40,14 @@ async def _run() -> None:
         sender=PyrogramMessenger(client),
         bus=RedisEventBus(redis),
         model=model,
+        extractor=model,
     )
     register_incoming(client, dispatcher)
     listener = asyncio.create_task(
         run_outgoing_listener(settings.redis_url, dispatcher),
         name="userbot-bus",
     )
+    connection = asyncio.create_task(_hold_openrouter(model), name="openrouter-keepalive")
     await client.start()
     me = client.me
     log.info(
@@ -57,12 +61,24 @@ async def _run() -> None:
         await idle()
     finally:
         listener.cancel()
-        await asyncio.gather(listener, return_exceptions=True)
+        connection.cancel()
+        await asyncio.gather(listener, connection, return_exceptions=True)
         await client.stop()
         if model is not None:
             await model.aclose()
         await close_redis()
         await dispose_db()
+
+
+async def _hold_openrouter(model: OpenRouterClient | None) -> None:
+    if model is None:
+        return
+    while True:
+        try:
+            await model.warm()
+        except Exception:
+            log.warning("openrouter_warm_failed")
+        await asyncio.sleep(_WARM_INTERVAL_SECONDS)
 
 
 def _reply_model(settings: Settings) -> OpenRouterClient | None:

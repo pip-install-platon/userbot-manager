@@ -34,6 +34,7 @@ async def _run() -> None:
     heartbeat = asyncio.create_task(
         heartbeat_loop(
             settings.redis_url,
+            session_factory,
             status_ttl_seconds=settings.status_ttl_seconds,
             heartbeat_ttl_seconds=settings.heartbeat_ttl_seconds,
             interval_seconds=settings.heartbeat_interval_seconds,

@@ -10,6 +10,8 @@ from core.schemas.operator import ProfileContent
 _NONCE_LENGTH = 12
 _TAG_LENGTH = 16
 _INFO = b"operator-v1"
+_DESK_SALT = b"crm-desk"
+_DESK_INFO = b"desk-v1"
 
 
 class CryptoService:
@@ -21,15 +23,20 @@ class CryptoService:
         self._master_key = master_key
 
     def encrypt_for_operator(self, operator_id: uuid.UUID, plaintext: bytes) -> bytes:
-        nonce = os.urandom(_NONCE_LENGTH)
-        encrypted = AESGCM(self._key(operator_id)).encrypt(nonce, plaintext, None)
-        return nonce + encrypted
+        return self._seal(self._key(operator_id), plaintext)
 
     def decrypt_for_operator(self, operator_id: uuid.UUID, blob: bytes) -> bytes:
-        if len(blob) < _NONCE_LENGTH + _TAG_LENGTH:
-            raise ValueError("ciphertext is too short")
-        nonce = blob[:_NONCE_LENGTH]
-        return AESGCM(self._key(operator_id)).decrypt(nonce, blob[_NONCE_LENGTH:], None)
+        return self._open(self._key(operator_id), blob)
+
+    def encrypt_for_desk(self, plaintext: bytes) -> bytes:
+        return self._seal(self._desk_key(), plaintext)
+
+    def decrypt_for_desk(self, blob: bytes) -> bytes:
+        return self._open(self._desk_key(), blob)
+
+    def decrypt_text(self, operator_id: uuid.UUID | None, blob: bytes) -> str:
+        raw = self.decrypt_for_desk(blob) if operator_id is None else self.decrypt_for_operator(operator_id, blob)
+        return raw.decode()
 
     def encrypt_profile(self, operator_id: uuid.UUID, profile: ProfileContent) -> bytes:
         return self.encrypt_for_operator(operator_id, profile.model_dump_json().encode())
@@ -38,12 +45,25 @@ class CryptoService:
         return ProfileContent.model_validate_json(self.decrypt_for_operator(operator_id, ciphertext))
 
     def _key(self, operator_id: uuid.UUID) -> bytes:
-        return HKDF(
-            algorithm=SHA256(),
-            length=32,
-            salt=str(operator_id).encode(),
-            info=_INFO,
-        ).derive(self._master_key)
+        return self._derive(str(operator_id).encode(), _INFO)
+
+    def _desk_key(self) -> bytes:
+        return self._derive(_DESK_SALT, _DESK_INFO)
+
+    def _derive(self, salt: bytes, info: bytes) -> bytes:
+        return HKDF(algorithm=SHA256(), length=32, salt=salt, info=info).derive(self._master_key)
+
+    @staticmethod
+    def _seal(key: bytes, plaintext: bytes) -> bytes:
+        nonce = os.urandom(_NONCE_LENGTH)
+        return nonce + AESGCM(key).encrypt(nonce, plaintext, None)
+
+    @staticmethod
+    def _open(key: bytes, blob: bytes) -> bytes:
+        if len(blob) < _NONCE_LENGTH + _TAG_LENGTH:
+            raise ValueError("ciphertext is too short")
+        nonce = blob[:_NONCE_LENGTH]
+        return AESGCM(key).decrypt(nonce, blob[_NONCE_LENGTH:], None)
 
 
 def encrypt_for_operator(service: CryptoService, operator_id: uuid.UUID, plaintext: bytes) -> bytes:

@@ -29,6 +29,12 @@ def profile_editor() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🎂 Возраст", callback_data="profile:age")],
             [InlineKeyboardButton(text="🏙 Город", callback_data="profile:city")],
             [InlineKeyboardButton(text="🏷 Теги", callback_data="profile:tags")],
+            [InlineKeyboardButton(text="📞 Телефон", callback_data="profile:phone")],
+            [InlineKeyboardButton(text="🔗 Анкета", callback_data="profile:profile_link")],
+            [InlineKeyboardButton(text="🔗 Фото", callback_data="profile:photo_link")],
+            [InlineKeyboardButton(text="🔗 Кружок", callback_data="profile:note_link")],
+            [InlineKeyboardButton(text="🔗 Видео", callback_data="profile:video_link")],
+            [InlineKeyboardButton(text="📍 Адрес", callback_data="profile:address")],
             [InlineKeyboardButton(text="Назад", callback_data="menu:profile")],
         ]
     )
@@ -47,9 +53,7 @@ def album_menu() -> InlineKeyboardMarkup:
 
 
 def prompt_back(callback_data: str = "profile:edit") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data=callback_data)]]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data=callback_data)]])
 
 
 def media_keyboard(media_rows: list[ProfileMedia]) -> InlineKeyboardMarkup:

@@ -146,6 +146,7 @@ async def test_admin_menu_routes(sessions: async_sessionmaker[AsyncSession]) -> 
         ">",
         "📝 Моя анкета",
         "📸 Альбом",
+        "📅 Встречи",
         "💬 Мои клиенты",
         "⚙️ Настройки",
         "🛡 Операторы",
@@ -193,6 +194,12 @@ async def test_admin_menu_routes(sessions: async_sessionmaker[AsyncSession]) -> 
         "🎂 Возраст",
         "🏙 Город",
         "🏷 Теги",
+        "📞 Телефон",
+        "🔗 Анкета",
+        "🔗 Фото",
+        "🔗 Кружок",
+        "🔗 Видео",
+        "📍 Адрес",
         "Назад",
     ]
 

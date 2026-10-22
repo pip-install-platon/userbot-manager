@@ -43,6 +43,7 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
     if user is None or message.id is None:
         return None
     text = message.text or message.caption
+    phone = _phone(message)
     if text is not None and len(text) > MAX_TEXT_LENGTH:
         await message.reply("Сообщение слишком длинное.")
         return None
@@ -58,9 +59,8 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
     elif message.video_note is not None:
         media_kind = MediaKind.VIDEO_NOTE.value
         file_id, file_size = _file_ref(message.video_note)
-    elif text is None:
-        await message.reply("Отправьте текст, фото, видео или кружок.")
-        return None
+    elif text is None and phone is None:
+        text = bare_marker(_bare_kind(message))
     if file_size is not None and file_size > max_bytes:
         await message.reply("Файл слишком большой.")
         return None
@@ -80,10 +80,49 @@ async def _to_incoming(client: Client, message: Message, max_bytes: int) -> Inco
         username=user.username,
         message_id=message.id,
         text=text,
+        phone_number=phone,
         media_file_id=file_id,
         media_kind=media_kind,
         media_bytes=media_bytes,
     )
+
+
+def bare_marker(kind: str | None) -> str:
+    markers = {
+        "sticker": "[стикер]",
+        "animation": "[гиф]",
+        "voice": "[голосовое]",
+        "audio": "[аудио]",
+        "document": "[файл]",
+    }
+    if kind is None:
+        return "[сообщение]"
+    return markers.get(kind, "[сообщение]")
+
+
+def _bare_kind(message: Message) -> str | None:
+    if message.sticker is not None:
+        return "sticker"
+    if message.animation is not None:
+        return "animation"
+    if message.voice is not None:
+        return "voice"
+    if message.audio is not None:
+        return "audio"
+    if message.document is not None:
+        return "document"
+    return None
+
+
+def _phone(message: Message) -> str | None:
+    contact = message.contact
+    if contact is not None and isinstance(contact.phone_number, str) and contact.phone_number.strip():
+        return contact.phone_number
+    user = message.from_user
+    number = getattr(user, "phone_number", None)
+    if isinstance(number, str) and number.strip():
+        return number
+    return None
 
 
 def _file_ref(media: object) -> tuple[str | None, int | None]:

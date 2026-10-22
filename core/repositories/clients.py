@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.constants import ClientState
 from core.db.models import Client
+from core.meetings.phone import normalize_phone
 
 
 async def get_by_id(session: AsyncSession, client_id: uuid.UUID) -> Client | None:
@@ -34,16 +35,21 @@ async def get_or_create(
     *,
     telegram_user_id: int,
     username: str | None,
+    phone_number: str | None = None,
 ) -> Client:
+    phone = normalize_phone(phone_number, strict=False)
     existing = await get_by_telegram_user_id(session, telegram_user_id)
     if existing is not None:
         if username and existing.username != username:
             existing.username = username
+        if phone and existing.phone_number != phone:
+            existing.phone_number = phone
         return existing
     client = Client(
         id=uuid.uuid4(),
         telegram_user_id=telegram_user_id,
         username=username,
+        phone_number=phone,
         state=ClientState.NEW.value,
     )
     try:

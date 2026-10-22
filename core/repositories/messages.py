@@ -1,9 +1,10 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from core.db.models import Message
 
@@ -13,7 +14,7 @@ async def insert_message(
     *,
     message_id: uuid.UUID,
     client_id: uuid.UUID,
-    operator_id: uuid.UUID,
+    operator_id: uuid.UUID | None,
     direction: str,
     ciphertext: bytes,
     media_file_id: str | None,
@@ -57,6 +58,61 @@ async def list_recent_dialog(
     rows = list(await session.scalars(statement))
     rows.reverse()
     return rows
+
+
+async def list_recent_visible(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    operator_id: uuid.UUID,
+    limit: int,
+) -> list[Message]:
+    statement = (
+        select(Message)
+        .where(Message.client_id == client_id, _visible(operator_id))
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(await session.scalars(statement))
+    rows.reverse()
+    return rows
+
+
+async def list_visible_dialog(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    operator_id: uuid.UUID,
+    limit: int,
+) -> list[Message]:
+    statement = (
+        select(Message)
+        .where(Message.client_id == client_id, _visible(operator_id))
+        .order_by(Message.created_at.asc())
+        .limit(limit)
+    )
+    return list(await session.scalars(statement))
+
+
+async def list_recent_desk(
+    session: AsyncSession,
+    *,
+    client_id: uuid.UUID,
+    limit: int,
+) -> list[Message]:
+    statement = (
+        select(Message)
+        .where(Message.client_id == client_id, Message.operator_id.is_(None))
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(await session.scalars(statement))
+    rows.reverse()
+    return rows
+
+
+def _visible(operator_id: uuid.UUID) -> ColumnElement[bool]:
+    return or_(Message.operator_id == operator_id, Message.operator_id.is_(None))
 
 
 async def list_dialog(

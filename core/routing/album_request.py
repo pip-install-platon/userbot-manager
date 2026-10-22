@@ -25,13 +25,13 @@ def detect_album_request(text: str | None) -> MediaKind | None:
 
 
 def missing_album_text(display_name: str, kind: MediaKind) -> str:
+    del display_name
     match kind:
         case MediaKind.PHOTO:
-            noun = "фото"
+            return "Фото пока нет, скину как будут 💕"
         case MediaKind.VIDEO:
-            noun = "видео"
+            return "Видео пока нет, скину как будут 💕"
         case MediaKind.VIDEO_NOTE:
-            noun = "кружков"
+            return "Кружков пока нет 😘"
         case _ as unreachable:
             assert_never(unreachable)
-    return f"В альбоме {display_name} пока нет {noun}."

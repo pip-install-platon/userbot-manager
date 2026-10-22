@@ -38,6 +38,7 @@ class ProfileEdit(StatesGroup):
     age = State()
     city = State()
     tags = State()
+    crm = State()
     photo = State()
     video = State()
     video_note = State()
@@ -49,15 +50,20 @@ _PROFILE_PROMPTS: dict[str, tuple[State, str]] = {
     "profile:city": (ProfileEdit.city, "Отправьте город. «-» очистит его."),
     "profile:tags": (ProfileEdit.tags, "Отправьте теги через запятую. «-» очистит их."),
 }
+_CRM_FIELDS: dict[str, tuple[str, str]] = {
+    "profile:phone": ("phone", "Отправьте номер телефона для звонка клиенту. «-» очистит его."),
+    "profile:profile_link": ("profile_link", "Отправьте ссылку на сообщение с анкетой. «-» очистит её."),
+    "profile:photo_link": ("photo_album_link", "Отправьте ссылку на фотоальбом. «-» очистит её."),
+    "profile:note_link": ("video_note_link", "Отправьте ссылку на кружок. «-» очистит её."),
+    "profile:video_link": ("video_link", "Отправьте ссылку на видео. «-» очистит её."),
+    "profile:address": ("approx_address", "Отправьте примерный адрес встречи. «-» очистит его."),
+}
 _ALBUM_PROMPTS: dict[str, tuple[State, str]] = {
     "album:photo": (ProfileEdit.photo, "Отправьте фото в альбом. Подпись сохранится вместе с ним."),
     "album:video": (ProfileEdit.video, "Отправьте видео в альбом. Подпись сохранится вместе с ним."),
     "album:video_note": (ProfileEdit.video_note, "Отправьте кружок в альбом."),
 }
-_ALBUM_TEXT = (
-    "Альбом не входит в анкету.\n"
-    "Юзербот отправит фото, видео или кружок, когда клиент попросит их в диалоге."
-)
+_ALBUM_TEXT = "Альбом не входит в анкету.\nЮзербот отправит фото, видео или кружок, когда клиент попросит их в диалоге."
 
 
 @router.callback_query(F.data == "menu:profile")
@@ -80,6 +86,35 @@ async def open_album(callback: CallbackQuery, state: FSMContext) -> None:
 async def open_editor(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await edit_callback_message(callback, "Что изменить в анкете?", profile_editor())
+
+
+@router.callback_query(F.data.in_(_CRM_FIELDS))
+async def ask_crm(callback: CallbackQuery, state: FSMContext) -> None:
+    field, text = _CRM_FIELDS[callback.data or ""]
+    await state.set_state(ProfileEdit.crm)
+    await state.update_data(crm_field=field)
+    await edit_callback_message(callback, text, prompt_back("profile:edit"))
+
+
+@router.message(ProfileEdit.crm)
+async def save_crm_field(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    operator: Operator,
+    crypto: CryptoService,
+    redis: Redis,
+) -> None:
+    data = await state.get_data()
+    field = str(data.get("crm_field", ""))
+    if field not in {item[0] for item in _CRM_FIELDS.values()}:
+        await state.clear()
+        await message.answer("Поле анкеты не выбрано.", reply_markup=profile_editor())
+        return
+    profile = read_profile(crypto, operator)
+    raw = (message.text or "").strip()
+    setattr(profile, field, None if raw == "-" else raw)
+    await _save(message, state, session, operator, crypto, redis, profile)
 
 
 @router.callback_query(F.data.in_({*_PROFILE_PROMPTS, *_ALBUM_PROMPTS}))
@@ -255,7 +290,7 @@ async def show_profile(callback: CallbackQuery, operator: Operator, crypto: Cryp
     profile = read_profile(crypto, operator)
     await edit_callback_message(
         callback,
-        h(profile.render(operator.display_name)),
+        h(profile.render_card(operator.display_name)),
         profile_root(),
     )
 
